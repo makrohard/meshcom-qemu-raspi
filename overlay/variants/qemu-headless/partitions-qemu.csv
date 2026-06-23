@@ -1,0 +1,11 @@
+# QEMU-headless single-application partition layout.
+# No SafeBoot chain: the application boots directly from 0x10000 so a simple
+# merged flash image (bootloader@0x1000, partition-table@0x8000, boot_app0@0xe000,
+# app@0x10000) runs under QEMU. The partition is named "app" to match the base
+# board_build.app_partition_name. 4 MB total.
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+app,      app,  ota_0,   0x10000,  0x300000,
+spiffs,   data, spiffs,  0x310000, 0xE0000,
+coredump, data, coredump,0x3F0000, 0x10000,

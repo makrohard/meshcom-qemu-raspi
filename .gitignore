@@ -1,0 +1,7 @@
+# Runtime/build output — never committed. Recreated by the scripts, removed by clean.sh.
+/.work/
+/.run/
+.pio/
+*.log
+*.bin
+*.elf

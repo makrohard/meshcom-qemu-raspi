@@ -1,0 +1,101 @@
+# MeshCom Firmware on QEMU (classic ESP32, headless)
+
+Run the **MeshCom firmware** headlessly in the official Espressif ESP32 QEMU
+on a Raspberry Pi, with OpenCores Ethernet (OpenETH) networking, so the existing
+MeshCom **web UI** and **net-console** are reachable from the host — no LoRa
+radio, Wi-Fi, BLE, GPS, display, or sensors required.
+
+By default it builds a **known-working, pinned stable release** of MeshCom (the
+version this overlay is verified against). The **latest `dev`** branch is also
+supported as an option. A small overlay adds a QEMU-only build profile and the
+QEMU support code.
+
+## Upstream references
+- MeshCom Firmware: https://github.com/icssw-org/MeshCom-Firmware
+- Espressif QEMU (ESP-IDF docs): https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/tools/qemu.html
+- PlatformIO: https://platformio.org/
+
+## Prerequisites (install once — scripts never auto-install)
+```bash
+# Debian/Raspberry Pi OS:
+sudo apt-get install -y git curl libslirp0
+pipx install platformio && pipx ensurepath        # PlatformIO (user-level)
+# Official Espressif QEMU (xtensa), via ESP-IDF tooling:
+#   python $IDF_PATH/tools/idf_tools.py install qemu-xtensa
+# (any install that puts qemu-system-xtensa under ~/.espressif/tools or on PATH works)
+```
+If a prerequisite is missing, each script stops and prints the exact command to run.
+
+## Reproduce
+Run from this directory, in order:
+```bash
+scripts/setup.sh            # fetch pinned stable MeshCom into .work/ (default)
+                            #   --dev for latest dev, or --ref <tag|branch|sha>
+scripts/apply-overlay.sh    # add the QEMU-headless overlay (checked patch)
+scripts/prepare-openeth.sh  # vendor the matching ESP-IDF OpenETH driver into .work/
+scripts/build.sh            # build the qemu-headless firmware + merge a flash image
+scripts/run.sh              # boot QEMU (foreground; keep this terminal open)
+```
+In a second terminal:
+```bash
+scripts/test.sh             # verify web UI (10x) + net-console + no radio
+scripts/status.sh           # quick state check at any time
+```
+
+## Browser
+Open: **http://127.0.0.1:18083/** — the existing MeshCom web UI.
+(The net-console listens on `127.0.0.1:12323`.)
+
+## Verify
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18083/   # -> 200
+scripts/status.sh                                                  # RUNNING + GOT_IP + http 200
+```
+
+## Stop / clean up
+```bash
+scripts/stop.sh             # stop only the QEMU instance started by run.sh
+scripts/clean.sh            # remove .work/ and .run/ (keeps overlay, scripts, README)
+```
+## Choosing the MeshCom version
+```bash
+scripts/setup.sh            # pinned known-working stable (default)
+scripts/setup.sh --dev      # latest upstream dev branch
+scripts/setup.sh --ref X    # any tag/branch/sha
+```
+Change the pin via `DEFAULT_REF` in `scripts/setup.sh`. With `--dev`/newer refs the
+overlay patch may need maintenance — `apply-overlay.sh` fails clearly if so.
+Picking a MeshCom version also fixes the Arduino framework/ESP-IDF (via its
+`platformio.ini`); the OpenETH driver is auto-fetched to match.
+
+## QEMU version
+QEMU is **never patched or installed by these scripts** — the official
+`qemu-system-xtensa` you already have is used as-is and *soft-pinned*: `run.sh`
+records the version and warns if it differs from the verified build, but still runs.
+```bash
+scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
+# exact tested build: idf_tools.py install qemu-xtensa@esp_develop_9.0.0_20240606
+```
+
+## Current limitations
+- No LoRa/RF, Wi-Fi, BLE, display, GPS, sensors, PMU, or battery hardware is
+  emulated; those are disabled in the QEMU build. `WiFi.status()` is not a valid
+  readiness signal (OpenETH is used instead).
+- Networking is QEMU user-mode (SLIRP). The guest reaches the host at `10.0.2.2`;
+  the host reaches the guest only via the forwarded ports above.
+- The overlay patch targets the upstream layout; if upstream changes those files,
+  `apply-overlay.sh` fails clearly and the patch needs maintenance.
+- Use read-only web pages / passive net-console only. Do not drive radio/config.
+
+## Tested with
+```
+- MeshCom (default pin):  v4.35p.06.16  (sha bde32f37a376233a283ce6ca75a3ed86303a0a50)
+- Also verified against:  upstream/dev  (latest, via --dev)
+- PlatformIO:             6.1.19
+- Arduino framework:      framework-arduinoespressif32 3.20017.241212 (Arduino-ESP32 2.0.17)
+- Bundled ESP-IDF:        4.4.7
+- Espressif QEMU:         qemu-xtensa esp_develop_9.0.0_20240606 (QEMU 9.0.0), aarch64
+- Host:                   Raspberry Pi (aarch64), Debian GNU/Linux 13 (trixie)
+```
+Resolved tool versions are auto-detected at run time; this block records what
+passed, not a hard requirement.

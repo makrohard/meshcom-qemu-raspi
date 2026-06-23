@@ -1,0 +1,300 @@
+diff --git a/src/batt_function_old.cpp b/src/batt_function_old.cpp
+index 15cb215..7b4c76b 100644
+--- a/src/batt_function_old.cpp
++++ b/src/batt_function_old.cpp
+@@ -322,6 +322,13 @@ float read_batt(void)
+ {
+ 	//printlndeb("read_batt");
+ 
++#ifdef QEMU_HEADLESS
++	// QEMU has no analog/ADC peripheral: adc1_get_raw() busy-waits forever for a
++	// conversion-done bit QEMU never sets, which would hang the main loop.
++	// Return a fixed plausible battery voltage (mV) instead.
++	return 4100.0f;
++#endif
++
+ 	float raw = 0.0;
+ 
+ 	#if defined(NRF52_SERIES) && not defined(BOARD_HELTEC_T114) && not defined(BOARD_T_ECHO)
+diff --git a/src/esp32/esp32_main.cpp b/src/esp32/esp32_main.cpp
+index 1b55ac5..40428c4 100644
+--- a/src/esp32/esp32_main.cpp
++++ b/src/esp32/esp32_main.cpp
+@@ -877,7 +877,22 @@ void esp32setup()
+         if(!bWIFIAP)
+             bWEBSERVER=false;
+     }
+-       
++
++    #ifdef QEMU_HEADLESS
++        // QEMU-only safe defaults (runtime overrides, NOT persisted): the target
++        // must start the web UI and net-console over OpenETH without any Wi-Fi
++        // configuration, AP, or Internet gateway/UDP traffic.
++        bWIFIAP        = false;   // no Wi-Fi AP / no Wi-Fi emulation
++        bWEBSERVER     = true;    // existing MeshCom web UI enabled
++        bNETCONSOLE    = true;    // existing MeshCom net-console enabled
++        bGATEWAY       = false;   // no Internet gateway
++        bGATEWAY_NOPOS = false;
++        bEXTUDP        = false;   // no external UDP
++        bMESH          = false;   // no mesh radio activity (radio is disabled in QEMU)
++        printlndeb("[QEMU]...headless defaults: web+console ON, wifiAP/gateway/extudp OFF");
++    #endif
++
++
+     if(bBMPON)
+     {
+         bBMEON=false;
+@@ -908,8 +923,10 @@ void esp32setup()
+ 
+     // Initialize battery reading
+     #if not defined (BOARD_T_DECK_PRO)
++    #ifndef QEMU_HEADLESS
+ 	init_batt();
+     #endif
++    #endif
+ 
+     #ifdef VEXT_CTRL
+         pinMode(VEXT_CTRL, OUTPUT);
+@@ -1029,8 +1046,10 @@ void esp32setup()
+     #else
+ 
+         #if !defined(BOARD_T_DECK_PRO) && !defined(BOARD_T5_EPAPER)
++        #ifndef QEMU_HEADLESS
+             setupPMU();
+         #endif
++        #endif
+ 
+     #endif
+ 
+@@ -1093,7 +1112,9 @@ void esp32setup()
+     }
+     #endif
+ 
++    #ifndef QEMU_HEADLESS
+     init_onebutton();
++    #endif
+ 
+     printfdeb("[INIT].._GW_ID: %08X\n", _GW_ID);
+ 
+@@ -1134,7 +1155,9 @@ void esp32setup()
+     #elif defined(HAS_TFT)
+         initTFT();
+     #else
++        #ifndef QEMU_HEADLESS
+         initDisplay();
++        #endif
+     #endif
+ 
+     #if defined(BOARD_HELTEC_V3) || defined(BOARD_STICK_V3)
+@@ -1151,7 +1174,9 @@ void esp32setup()
+         String  version = cvers;
+         displayTFT("MeshCom 4.0", version, "@BY ICSSW.ORG", "OE1KBC, OE1KFR",  "...starting now", 5000);
+     #else
++        #ifndef QEMU_HEADLESS
+         startDisplay((char*)"...starting now", (char*)"@BY ICSSW.ORG", (char*)"OE1KBC, OE1KFR");
++        #endif
+     #endif
+ 
+     //LORA CHIP present
+@@ -1231,6 +1256,13 @@ void esp32setup()
+         int state = radio.begin(433.175);
+         radio.setDio2AsRfSwitch(true);
+         radio.setTCXO(1.8);
++        #elif defined(QEMU_HEADLESS)
++        // QEMU headless: no LoRa hardware. Do NOT initialise RadioLib/SPI; force
++        // "no backend" so bRadio stays false and the entire radio bring-up and the
++        // radio TX/RX loop blocks (all guarded by if(bRadio)) are skipped. No RF.
++        int state = RADIOLIB_ERR_CHIP_NOT_FOUND;
++        (void)state;
++        printlndeb("[QEMU]...LoRa radio disabled (no backend); RadioLib/SPI init skipped");
+         #else
+         int state = radio.begin(433.175);
+         #endif
+@@ -1555,6 +1587,7 @@ void esp32setup()
+ 
+     bleQueue = xQueueCreate(5, sizeof(BleQueueItem));
+ 
++#ifndef QEMU_HEADLESS
+     NimBLEDevice::init(strBLEName);
+ 
+     printfdeb("[BLE ]...Device-Address <%s>\n", NimBLEDevice::toString().c_str());
+@@ -1637,7 +1670,10 @@ void esp32setup()
+         pAdvertising->enableScanResponse(false);
+     
+     pAdvertising->start();
+- 
++#else
++    printlndeb("[QEMU]...BLE/NimBLE disabled (no backend in QEMU); BLE init skipped");
++#endif
++
+     printfdeb("[BLE ]...Waiting a client connection to notify...\n");
+     
+     // reset GPS-Time parameter
+@@ -1709,11 +1745,17 @@ void esp32setup()
+ // BLE TX Function -> Node to Client
+ void esp32_write_ble(uint8_t confBuff[300], uint8_t conf_len)
+ {
++#ifdef QEMU_HEADLESS
++    // No BLE backend in QEMU; characteristic was never created.
++    (void)confBuff; (void)conf_len;
++    return;
++#else
+     if(bBLEDEBUG)
+         printfdeb("[LOOP] <%lu> WRITE BLE\n", millis());
+ 
+     pTxCharacteristic->setValue(confBuff, conf_len);
+     pTxCharacteristic->notify();
++#endif
+ }
+ 
+ 
+diff --git a/src/net_console.cpp b/src/net_console.cpp
+index 47e0c49..eff3925 100644
+--- a/src/net_console.cpp
++++ b/src/net_console.cpp
+@@ -25,6 +25,7 @@
+ // HardwareSerial reference before #define Serial MSerial takes effect.
+ #include <Arduino.h>
+ #include <WiFi.h>
++#include "qemu/qemu_network.h"   // QEMU_HEADLESS only (self-guarded)
+ #include <netinet/in.h>
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/semphr.h>
+@@ -309,8 +310,14 @@ void loopNetConsole()
+     // und damit einen Panic/Reboot. Daher hier frueh aussteigen, solange kein WiFi verbunden
+     // ist. s_server_pending bleibt erhalten, sodass der Listening-Socket geoeffnet wird, sobald
+     // die WiFi-Verbindung steht. (Ohne IP kann die Netconsole ohnehin nicht arbeiten.)
++    #ifdef QEMU_HEADLESS
++    // QEMU headless: the lwIP/TCP stack is ready once OpenETH has an IPv4 address.
++    if (!qemuNetworkReady())
++        return;
++    #else
+     if (WiFi.status() != WL_CONNECTED)
+         return;
++    #endif
+ 
+     // Open listening socket on first call (triggered by startNetConsole)
+     if (s_server_pending)
+diff --git a/src/udp_functions.cpp b/src/udp_functions.cpp
+index a94c3ec..d6e4b9b 100644
+--- a/src/udp_functions.cpp
++++ b/src/udp_functions.cpp
+@@ -4,6 +4,8 @@
+  */
+ #include <Arduino.h>
+ 
++#include "qemu/qemu_network.h"   // QEMU_HEADLESS only (self-guarded)
++
+ #include <udp_functions.h>
+ #include <extudp_functions.h>
+ #include <debugconf.h>
+@@ -483,8 +485,39 @@ void sendMeshComUDP()
+ }
+ 
+ 
++#ifdef QEMU_HEADLESS
++// QEMU-only: copy the OpenETH IPv4 state into meshcom_settings (mirrors what the
++// Wi-Fi/Ethernet path does), using the event-driven readiness from qemu_network.
++static bool qemuApplyNetState()
++{
++  IPAddress ip, gw, mask;
++  if(!qemuNetworkReady() || !qemuNetworkGetIp(ip, gw, mask))
++    return false;
++  snprintf(meshcom_settings.node_ip, sizeof(meshcom_settings.node_ip), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
++  snprintf(meshcom_settings.node_gw, sizeof(meshcom_settings.node_gw), "%u.%u.%u.%u", gw[0], gw[1], gw[2], gw[3]);
++  snprintf(meshcom_settings.node_subnet, sizeof(meshcom_settings.node_subnet), "%u.%u.%u.%u", mask[0], mask[1], mask[2], mask[3]);
++  hasIPaddress = true;
++  meshcom_settings.node_hasIPaddress = true;
++  iWlanWait = 0;
++  return true;
++}
++#endif
++
+  bool startNetwork()
+  {
++  #ifdef QEMU_HEADLESS
++    // QEMU headless: bring up OpenETH instead of Wi-Fi. Non-blocking: start the
++    // driver and let the existing loop poll doWiFiConnect() until GOT_IP.
++    qemuNetworkStart();
++    if(qemuApplyNetState())
++    {
++      printlndeb("[QEMU]...OpenETH ready; node IP assigned, network up");
++      return true;
++    }
++    iWlanWait = 1;   // not ready yet -> loop calls doWiFiConnect() (non-blocking)
++    return false;
++  #endif
++
+   #if defined(HAS_ETHERNET)
+ 
+       if(meshcom_settings.node_netmode == 1)
+@@ -652,6 +685,17 @@ void sendMeshComUDP()
+ 
+ bool doWiFiConnect()
+ {
++  #ifdef QEMU_HEADLESS
++    // QEMU headless: non-blocking. Report OpenETH readiness; never touch Wi-Fi or
++    // startMeshComUDP(). No blocking poll loop.
++    if(qemuApplyNetState())
++    {
++      printlndeb("[QEMU]...OpenETH connect OK");
++      return true;
++    }
++    return false;
++  #endif
++
+   if(iWlanWait == 1)
+     printdeb("[WIFI]...Wait connect ");
+ 
+diff --git a/src/web_functions/web_functions.cpp b/src/web_functions/web_functions.cpp
+index 6818437..e07ce73 100644
+--- a/src/web_functions/web_functions.cpp
++++ b/src/web_functions/web_functions.cpp
+@@ -4,6 +4,8 @@
+  */
+ #include <Arduino.h>
+ 
++#include "qemu/qemu_network.h"   // QEMU_HEADLESS only (self-guarded)
++
+ #include <configuration.h>
+ #include <debugconf.h>
+ #include "web_functions.h"
+@@ -98,20 +100,29 @@ void startWebserver()
+     bool ethernet_mode = false;
+     #endif
+ 
+-    if (!is_connected && !is_ap_active && !ethernet_mode)
++    #ifdef QEMU_HEADLESS
++    bool qemu_ready = qemuNetworkReady();
++    #else
++    bool qemu_ready = false;
++    #endif
++
++    if (!is_connected && !is_ap_active && !ethernet_mode && !qemu_ready)
+     {
+         return;
+     }
+ 
+     web_server.stop();
+ 
++    #ifndef QEMU_HEADLESS
+     MDNS.end();
++    #endif
+ 
+     // Set up mDNS responder:
+     // - first argument is the domain name, in this example
+     //   the fully-qualified domain name is "esp32.local"
+     // - second argument is the IP address to advertise
+     //   we send our IP address on the WiFi network
++    #ifndef QEMU_HEADLESS
+     if(bMDNSOK)
+     {
+         if (!MDNS.begin(meshcom_settings.node_call))
+@@ -134,6 +145,7 @@ void startWebserver()
+             }
+         }
+     }
++    #endif
+ 
+     web_server.begin();
+ 
