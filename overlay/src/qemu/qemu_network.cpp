@@ -19,6 +19,12 @@
 #include "openeth_compat.h"
 
 static volatile bool s_got_ip = false;
+// STRICT, event-only readiness: set true ONLY from a genuine IP_EVENT_ETH_GOT_IP and
+// cleared on Ethernet loss (DISCONNECTED/STOP/LOST_IP). Unlike s_got_ip it is NEVER set
+// by the static SLIRP fallback, so the external-radio transport gate
+// (externalRadioNetworkReady -> qemuNetworkReadyEvent) reflects real OpenETH IP
+// connectivity only. The default qemu-headless paths keep using s_got_ip/qemuNetworkReady().
+static volatile bool s_got_ip_event = false;
 static bool s_started = false;
 static uint32_t s_start_ms = 0;
 static bool s_static_applied = false;
@@ -42,12 +48,16 @@ static void eth_event_handler(void *, esp_event_base_t, int32_t event_id, void *
         break;
     case ETHERNET_EVENT_DISCONNECTED:
         Serial.println("[QEMU]...OpenETH link disconnected");
+        // Genuine link loss: clear the strict event-readiness so the external-radio
+        // transport's gate drops and it stops safely (recovers on the next GOT_IP).
+        s_got_ip_event = false;
         break;
     case ETHERNET_EVENT_START:
         Serial.println("[QEMU]...OpenETH driver started");
         break;
     case ETHERNET_EVENT_STOP:
         Serial.println("[QEMU]...OpenETH driver stopped");
+        s_got_ip_event = false;
         break;
     default:
         break;
@@ -61,6 +71,16 @@ static void got_ip_event_handler(void *, esp_event_base_t, int32_t, void *event_
     Serial.printf("[QEMU]...OpenETH GOT_IP ip=" IPSTR " mask=" IPSTR " gw=" IPSTR "\n",
                   IP2STR(&s_ip_info.ip), IP2STR(&s_ip_info.netmask), IP2STR(&s_ip_info.gw));
     s_got_ip = true;
+    // Genuine IP event: this is the ONLY place strict event-readiness becomes true.
+    s_got_ip_event = true;
+}
+
+// Genuine loss of a usable IPv4 lease (DHCP lease lost / link down). Clears strict
+// event-readiness; the external-radio transport gate drops and recovers on the next GOT_IP.
+static void lost_ip_event_handler(void *, esp_event_base_t, int32_t, void *)
+{
+    Serial.println("[QEMU]...OpenETH LOST_IP (usable IPv4 lease lost)");
+    s_got_ip_event = false;
 }
 
 bool qemuNetworkStart()
@@ -114,6 +134,7 @@ bool qemuNetworkStart()
 
     esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler, nullptr);
     esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, nullptr);
+    esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_LOST_IP, &lost_ip_event_handler, nullptr);
 
     Serial.println("[QEMU]...starting OpenETH (esp_eth_start)");
     if (esp_eth_start(s_eth_handle) != ESP_OK) {
@@ -160,6 +181,15 @@ bool qemuNetworkReady()
     return s_got_ip;
 }
 
+// STRICT, event-backed readiness for the external-radio transport. True ONLY after a
+// genuine IP_EVENT_ETH_GOT_IP and false again on Ethernet loss. Deliberately does NOT
+// consult/apply the static SLIRP fallback, so a fallback is never accepted as real
+// OpenETH IP readiness for the XR link. Used by the EXTERNAL_RADIO override only.
+bool qemuNetworkReadyEvent()
+{
+    return s_got_ip_event;
+}
+
 bool qemuNetworkGetIp(IPAddress &ip, IPAddress &gateway, IPAddress &mask)
 {
     if (!s_got_ip)
@@ -177,6 +207,7 @@ void qemuNetworkStop()
     esp_eth_stop(s_eth_handle);
     s_started = false;
     s_got_ip = false;
+    s_got_ip_event = false;
 }
 
 #endif // QEMU_HEADLESS

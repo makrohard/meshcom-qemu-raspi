@@ -116,8 +116,15 @@ How it stays opt-in and out-of-tree:
   ```
 - The readiness override lives **only in this overlay**
   (`overlay/src/qemu/qemu_external_radio_ready.cpp`): a strong override of the
-  firmware's weak `externalRadioNetworkReady()` seam that returns true ONLY when
-  OpenETH actually obtained an IP (`qemuNetworkReady()`) — never unconditionally.
+  firmware's weak `externalRadioNetworkReady()` seam that returns true ONLY on
+  STRICT, event-backed OpenETH IP connectivity (`qemuNetworkReadyEvent()`): true
+  after a genuine `IP_EVENT_ETH_GOT_IP`, cleared again on Ethernet loss, and never
+  satisfied by the transparent SLIRP static fallback — never unconditionally.
+- In this env only, the firmware's Wi-Fi-specific 30s `checkWifiPing` watchdog is
+  compiled out (an `EXTERNAL_RADIO`-gated patch hunk). With no Wi-Fi present it would
+  otherwise see `WiFi.status() != WL_CONNECTED` forever and churn the web/network
+  lifecycle, tripping the XR readiness gate. The default `qemu-headless` target keeps
+  the original watchdog and the SLIRP fallback unchanged.
 - The bridge endpoint and HMAC password are supplied **locally at build time** via
   environment variables and are **never committed**:
   ```bash
@@ -133,8 +140,9 @@ bridge (`--backend loraham`, loopback, `--password-file`), then boot this target
 The firmware obtains an OpenETH IP, connects to the bridge, authenticates (HMAC),
 and CONFIGUREs with its MeshCom radio profile; RX from a peer flows into native
 MeshCom ingress. Note: set the node's TX power ≤ 20 dBm (`--txpower`, the daemon
-caps power), and that the firmware's WiFi-keepalive watchdog is active under
-emulation — the external-radio link may be intermittent in long runs.
+caps power). The Wi-Fi-specific keepalive watchdog is suppressed in this env and XR
+readiness is event-backed, so the external-radio link stays stable across long idle
+runs (no Wi-Fi-triggered web/network churn or false PONG timeouts).
 
 This overlay adds no MeshCom application logic to the bridge or daemon; the bridge
 remains byte-transparent and payload-neutral.

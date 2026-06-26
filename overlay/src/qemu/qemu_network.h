@@ -22,8 +22,16 @@
 // the driver; readiness is signalled later via qemuNetworkReady().
 bool qemuNetworkStart();
 
-// True only after an IPv4 address was obtained via IP_EVENT_ETH_GOT_IP.
+// True once the QEMU PoC network is usable: after IP_EVENT_ETH_GOT_IP, OR after the
+// transparent SLIRP static fallback (see qemuMaybeApplyStatic). Used by the default
+// qemu-headless services (web UI / net-console / udp) in both environments.
 bool qemuNetworkReady();
+
+// STRICT, event-backed readiness: true ONLY after a genuine IP_EVENT_ETH_GOT_IP and
+// cleared on Ethernet loss (DISCONNECTED/STOP/LOST_IP). NEVER satisfied by the static
+// SLIRP fallback. This is the predicate the external-radio transport gates on, so the
+// XR link only comes up on real OpenETH IP connectivity.
+bool qemuNetworkReadyEvent();
 
 // Copies the current IPv4 address/gateway/mask. Returns false if not ready.
 bool qemuNetworkGetIp(IPAddress &ip, IPAddress &gateway, IPAddress &mask);

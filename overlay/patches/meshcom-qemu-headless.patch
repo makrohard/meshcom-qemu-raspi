@@ -148,6 +148,32 @@ index 1b55ac5..40428c4 100644
  }
  
  
+@@ -2673,6 +2715,17 @@ void esp32loop()
+     }
+     #endif
+ 
++    #if defined(QEMU_HEADLESS) && defined(EXTERNAL_RADIO)
++    // QEMU external-radio (M13b stabilization): there is no Wi-Fi in this environment.
++    // The 30s checkWifiPing watchdog below would see WiFi.status() != WL_CONNECTED forever,
++    // exhaust ifalseping, then Udp.stop()/WiFi.disconnect(), clear node_hasIPaddress and
++    // stopWebserver()+startNetwork() -- churning the network lifecycle and dropping the
++    // external-radio transport's readiness gate (false PONG-timeout / needless reconnect).
++    // OpenETH readiness here is event-backed (externalRadioNetworkReady -> qemuNetworkReadyEvent)
++    // and the XR transport keeps its own connectivity/error handling, so this Wi-Fi-specific
++    // watchdog is suppressed ONLY in this environment. Default qemu-headless and all real
++    // boards keep the original block (the #else branch below) unchanged.
++    #else
+     // check WiFI connected with Ping every 30 sec
+     if(meshcom_settings.node_netmode == 0 && (wifi_active_timer + 30000) < millis())
+     {
+@@ -2702,6 +2755,7 @@ void esp32loop()
+             wifi_active_timer = millis();
+         }
+     }
++    #endif
+ 
+     // SOFTSER
+     #if defined(ENABLE_SOFTSER)
 diff --git a/src/net_console.cpp b/src/net_console.cpp
 index 47e0c49..eff3925 100644
 --- a/src/net_console.cpp
