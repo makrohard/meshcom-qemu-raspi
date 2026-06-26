@@ -141,8 +141,9 @@ The firmware obtains an OpenETH IP, connects to the bridge, authenticates (HMAC)
 and CONFIGUREs with its MeshCom radio profile; RX from a peer flows into native
 MeshCom ingress. Note: set the node's TX power ≤ 20 dBm (`--txpower`, the daemon
 caps power). The Wi-Fi-specific keepalive watchdog is suppressed in this env and XR
-readiness is event-backed, so the external-radio link stays stable across long idle
-runs (no Wi-Fi-triggered web/network churn or false PONG timeouts).
+readiness is event-backed, so the design prevents Wi-Fi-triggered web/network churn
+and the false XR PONG timeouts it caused. A live 30-minute idle-stability run is
+still required to confirm this and remains outstanding until it has actually passed.
 
 This overlay adds no MeshCom application logic to the bridge or daemon; the bridge
 remains byte-transparent and payload-neutral.
