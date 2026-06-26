@@ -15,19 +15,21 @@ set -eu
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/.work/MeshCom-Firmware"
 RUN="$ROOT/.run"; mkdir -p "$RUN"
-FLASH="$SRC/.pio/build/qemu-headless/flash.bin"
 
 # Soft pin: the official Espressif QEMU build this overlay is verified against.
 # This is documentation + a warning, NOT a hard requirement (no pinning by install).
 KNOWN_GOOD_QEMU="esp_develop_9.0.0_20240606"
 
 QEMU_OVERRIDE=""
+ENV_NAME="qemu-headless"   # opt-in: --env qemu-headless-extradio for the external-radio target
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--qemu) QEMU_OVERRIDE="${2:?--qemu needs a path}"; shift 2 ;;
+		--env) ENV_NAME="${2:?--env needs a value}"; shift 2 ;;
 		*) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
+FLASH="$SRC/.pio/build/$ENV_NAME/flash.bin"
 
 # Locate the official Espressif qemu-system-xtensa (override > PATH > idf_tools).
 if [ -n "$QEMU_OVERRIDE" ]; then

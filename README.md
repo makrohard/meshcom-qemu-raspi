@@ -99,3 +99,42 @@ scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
 ```
 Resolved tool versions are auto-detected at run time; this block records what
 passed, not a hard requirement.
+
+## External-radio overlay (opt-in)
+An optional target boots the **real MeshCom `EXTERNAL_RADIO` firmware** under QEMU
+so it connects to a local `meshcom-loraham-bridge` over the guest→host route — used
+to validate the native firmware against the bridge/daemon/Pi-HAT/RF path without
+flashing hardware. The default `qemu-headless` target is completely unaffected.
+
+How it stays opt-in and out-of-tree:
+- It runs a **local MeshCom feature branch** (the external-radio code is not
+  upstream). Point the harness at a local checkout WITHOUT modifying that source:
+  ```bash
+  scripts/setup.sh --src /path/to/MeshCom-Firmware --ref feature/external-radio-tcp-draft
+  scripts/apply-overlay.sh
+  scripts/prepare-openeth.sh
+  ```
+- The readiness override lives **only in this overlay**
+  (`overlay/src/qemu/qemu_external_radio_ready.cpp`): a strong override of the
+  firmware's weak `externalRadioNetworkReady()` seam that returns true ONLY when
+  OpenETH actually obtained an IP (`qemuNetworkReady()`) — never unconditionally.
+- The bridge endpoint and HMAC password are supplied **locally at build time** via
+  environment variables and are **never committed**:
+  ```bash
+  export XR_HOST=10.0.2.2 XR_PORT=7000 XR_PASSWORD=<secret>
+  scripts/build.sh --env qemu-headless-extradio
+  scripts/run.sh   --env qemu-headless-extradio
+  ```
+  (`10.0.2.2` is QEMU's standard SLIRP host route; a bridge bound to host
+  `127.0.0.1:<port>` is reachable there. Bind the bridge to loopback + HMAC.)
+
+Native validation workflow (high level): start the LoRaHAM daemon (433) and the
+bridge (`--backend loraham`, loopback, `--password-file`), then boot this target.
+The firmware obtains an OpenETH IP, connects to the bridge, authenticates (HMAC),
+and CONFIGUREs with its MeshCom radio profile; RX from a peer flows into native
+MeshCom ingress. Note: set the node's TX power ≤ 20 dBm (`--txpower`, the daemon
+caps power), and that the firmware's WiFi-keepalive watchdog is active under
+emulation — the external-radio link may be intermittent in long runs.
+
+This overlay adds no MeshCom application logic to the bridge or daemon; the bridge
+remains byte-transparent and payload-neutral.

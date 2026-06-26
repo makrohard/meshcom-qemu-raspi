@@ -8,7 +8,13 @@ set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/.work/MeshCom-Firmware"
-ENV_NAME="qemu-headless"
+ENV_NAME="qemu-headless"   # opt-in: --env qemu-headless-extradio for the external-radio target
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--env) ENV_NAME="${2:?--env needs a value}"; shift 2 ;;
+		*) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
+	esac
+done
 BUILD="$SRC/.pio/build/$ENV_NAME"
 export PATH="$HOME/.local/bin:$PATH"
 
