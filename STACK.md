@@ -43,16 +43,18 @@ scripts/apply-overlay.sh
 scripts/prepare-openeth.sh
 scripts/build.sh --env qemu-headless-gpsd
 
-# terminal 1 — boot the node (creates .run/gps-uart1.sock)
-scripts/run.sh --env qemu-headless-gpsd
-
-# terminal 2 — feed a synthetic fix (fictional 48°N 12°E)
+# terminal 1 — feed a synthetic fix (fictional 48°N 12°E) FIRST: GPS init is one-shot,
+# so NMEA must be flowing when the node boots; the relay waits for the socket.
 python3 scripts/gps-relay.py --mode fixture \
         --fixture fixtures/gps/valid_fix.nmea --uart .run/gps-uart1.sock --rate 5 --loop
+
+# terminal 2 — boot the node (creates .run/gps-uart1.sock)
+scripts/run.sh --env qemu-headless-gpsd
 ```
 
 Open **http://127.0.0.1:18083/** (net-console on `127.0.0.1:12323`). Stop with
-`scripts/stop.sh`. The automated fixture suite is `scripts/test-gps.sh --env qemu-headless-gpsd`.
+`scripts/stop.sh`. The automated fixture suite (`scripts/test-gps.sh --env qemu-headless-gpsd`)
+handles the relay/node ordering itself.
 
 ---
 
@@ -89,19 +91,21 @@ cd ~/src/meshcom-loraham-bridge
 ```
 
 ```bash
-# 5) Boot the node (10.0.2.2 is QEMU's host route to the loopback bridge)
-cd ~/src/meshcom-qemu-raspi
-scripts/run.sh --env qemu-headless-extradio-gpsd
-```
-
-```bash
-# 6) GPS — pick ONE:
+# 5) GPS relay — start it BEFORE the node. The firmware's GPS init is one-shot, so
+#    NMEA must already be flowing when the node boots; the relay waits for the UART
+#    socket (created by run.sh) with backoff, so launching it first is fine. Pick ONE:
 cd ~/src/meshcom-qemu-raspi
 #  a) synthetic fix (no receiver):
 python3 scripts/gps-relay.py --mode fixture \
         --fixture fixtures/gps/valid_fix.nmea --uart .run/gps-uart1.sock --rate 5 --loop
 #  b) real u-blox (after docs/gpsd-host-setup.md assigns the device to gpsd):
 # python3 scripts/gps-relay.py --mode gpsd --gpsd 127.0.0.1:2947 --uart .run/gps-uart1.sock
+```
+
+```bash
+# 6) Boot the node (10.0.2.2 is QEMU's host route to the loopback bridge)
+cd ~/src/meshcom-qemu-raspi
+scripts/run.sh --env qemu-headless-extradio-gpsd
 ```
 
 Open **http://127.0.0.1:18083/**. Expected: bridge logs `configured; radio ready`, the
@@ -122,6 +126,12 @@ scripts/clean.sh                                            # remove .work/ and 
 
 ## Notes
 
+- **Daemon must run in DIRECT TX mode** (`--tx-mode-433 direct`). MeshCom does its own
+  CSMA; the daemon's default MANAGED mode gates/drops the node's packets via CAD/LBT, so
+  the T-Deck never hears them. (Runtime fix without restart: `SET TXMODE=DIRECT` to
+  `/tmp/loraconf433.sock`.)
+- **Start the GPS relay before the node** — the firmware's GPS init is one-shot, so NMEA
+  must be flowing when it runs (the relay waits for the UART socket, so launch it first).
 - **TX power is 20 dBm** (`overlay/variants/qemu-headless/configuration.h`): the daemon
   caps TX at 20 and rejects a higher CONFIGURE, and the firmware snapshots power once at
   XR connect (a runtime `--txpower` is not re-synced into XR).

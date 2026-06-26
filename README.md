@@ -87,7 +87,9 @@ scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
   the host reaches the guest only via the forwarded ports above.
 - The overlay patch targets the upstream layout; if upstream changes those files,
   `apply-overlay.sh` fails clearly and the patch needs maintenance.
-- Use read-only web pages / passive net-console only. Do not drive radio/config.
+- On the **default** target there is no radio to drive, so web pages / net-console are
+  read-only in practice; the opt-in GPS and external-radio profiles are driven as their
+  sections below describe.
 
 ## Tested with
 ```
@@ -112,15 +114,19 @@ fixtures. The default `qemu-headless` and external-radio targets are unaffected.
 
 ```bash
 scripts/build.sh --env qemu-headless-gpsd
-scripts/run.sh   --env qemu-headless-gpsd        # creates .run/gps-uart1.sock
-# feed NMEA — a synthetic fix (no receiver) …
+
+# Start the relay FIRST: GPS init is one-shot, so NMEA must be flowing when the node
+# boots; the relay waits for the socket run.sh creates. Synthetic fix (no receiver) …
 python3 scripts/gps-relay.py --mode fixture \
         --fixture fixtures/gps/valid_fix.nmea --uart .run/gps-uart1.sock --rate 5 --loop
 # … or the real u-blox via host gpsd:
 # python3 scripts/gps-relay.py --mode gpsd --gpsd 127.0.0.1:2947 --uart .run/gps-uart1.sock
 
+# then boot the node (separate terminal):
+scripts/run.sh   --env qemu-headless-gpsd        # creates .run/gps-uart1.sock
+
 scripts/test-gps.sh --env qemu-headless-gpsd     # automated fixture suite (valid/no-fix/
-                                                 # malformed/stale/short-track)
+                                                 # malformed/stale/short-track; handles ordering)
 ```
 
 - **Live u-blox via host gpsd** (loopback-only; the guest never touches
