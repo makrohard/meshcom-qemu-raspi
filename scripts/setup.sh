@@ -26,17 +26,25 @@ UPSTREAM_URL="https://github.com/icssw-org/MeshCom-Firmware.git"
 # (Configurable: edit this, or override per-run with --dev / --ref.)
 DEFAULT_REF="v4.35p.06.16"
 REF="$DEFAULT_REF"
+# Opt-in: clone the firmware from a LOCAL repository/path instead of upstream.
+# Used by the external-radio validation to run a local feature branch WITHOUT
+# modifying that source. Default (empty) keeps the normal upstream behavior.
+SRCURL=""
 
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--dev) REF="dev"; shift ;;
 		--stable) REF="$DEFAULT_REF"; shift ;;
 		--ref) REF="${2:?--ref needs a value}"; shift 2 ;;
+		--src) SRCURL="${2:?--src needs a path/URL}"; shift 2 ;;
 		*) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
 
-if [ "$REF" = "$DEFAULT_REF" ]; then
+# --src implies a non-default ref must usually be given (e.g. a feature branch).
+if [ -n "$SRCURL" ]; then
+	echo "[setup] using LOCAL firmware source: $SRCURL (ref $REF)"
+elif [ "$REF" = "$DEFAULT_REF" ]; then
 	echo "[setup] using pinned stable ref: $REF"
 else
 	echo "[setup] using requested ref: $REF (not the pinned default $DEFAULT_REF)"
@@ -48,7 +56,13 @@ need git "sudo apt-get install -y git"
 
 mkdir -p "$WORK" "$RUN"
 
-if [ -d "$SRC/.git" ]; then
+if [ -n "$SRCURL" ]; then
+	# Local source: clone read-only FROM the given repo (the source is never
+	# modified) and check out the requested ref into the workspace.
+	echo "[setup] cloning local source $SRCURL ($REF) -> $SRC (fresh)"
+	rm -rf "$SRC"
+	git clone --branch "$REF" "$SRCURL" "$SRC"
+elif [ -d "$SRC/.git" ]; then
 	echo "[setup] workspace already present at $SRC; fetching latest"
 	git -C "$SRC" remote set-url origin "$UPSTREAM_URL"
 	git -C "$SRC" fetch --depth 1 origin "$REF"
