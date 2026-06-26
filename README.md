@@ -8,7 +8,8 @@ radio, Wi-Fi, BLE, GPS, display, or sensors required.
 By default it builds a **known-working, pinned stable release** of MeshCom (the
 version this overlay is verified against). The **latest `dev`** branch is also
 supported as an option. A small overlay adds a QEMU-only build profile and the
-QEMU support code.
+QEMU support code. Opt-in profiles add **external-radio** and **GPS** support
+(sections below); the default headless target is unaffected.
 
 ## Upstream references
 - MeshCom Firmware: https://github.com/icssw-org/MeshCom-Firmware
@@ -78,9 +79,10 @@ scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
 ```
 
 ## Current limitations
-- No LoRa/RF, Wi-Fi, BLE, display, GPS, sensors, PMU, or battery hardware is
-  emulated; those are disabled in the QEMU build. `WiFi.status()` is not a valid
-  readiness signal (OpenETH is used instead).
+- No LoRa/RF, Wi-Fi, BLE, display, sensors, PMU, or battery hardware is emulated;
+  those are disabled in the QEMU build. (GPS is available as an opt-in profile via
+  injected NMEA — see *GPS (opt-in)*.) `WiFi.status()` is not a valid readiness
+  signal (OpenETH is used instead).
 - Networking is QEMU user-mode (SLIRP). The guest reaches the host at `10.0.2.2`;
   the host reaches the guest only via the forwarded ports above.
 - The overlay patch targets the upstream layout; if upstream changes those files,
@@ -99,6 +101,31 @@ scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
 ```
 Resolved tool versions are auto-detected at run time; this block records what
 passed, not a hard requirement.
+
+## GPS (opt-in)
+Opt-in profiles add the **real MeshCom GPS path** (TinyGPSPlus), fed line-oriented
+NMEA over a virtual UART1 — from the host **gpsd** (live u-blox) or from synthetic
+fixtures. The default `qemu-headless` and external-radio targets are unaffected.
+
+- `qemu-headless-gpsd` — GPS only; used by the automated NMEA-fixture suite.
+- `qemu-headless-extradio-gpsd` — GPS plus the external-radio path.
+
+```bash
+scripts/build.sh --env qemu-headless-gpsd
+scripts/run.sh   --env qemu-headless-gpsd        # creates .run/gps-uart1.sock
+# feed NMEA — a synthetic fix (no receiver) …
+python3 scripts/gps-relay.py --mode fixture \
+        --fixture fixtures/gps/valid_fix.nmea --uart .run/gps-uart1.sock --rate 5 --loop
+# … or the real u-blox via host gpsd:
+# python3 scripts/gps-relay.py --mode gpsd --gpsd 127.0.0.1:2947 --uart .run/gps-uart1.sock
+
+scripts/test-gps.sh --env qemu-headless-gpsd     # automated fixture suite (valid/no-fix/
+                                                 # malformed/stale/short-track)
+```
+
+- **Live u-blox via host gpsd** (loopback-only; the guest never touches
+  `/dev/ttyACM0`): [docs/gpsd-host-setup.md](docs/gpsd-host-setup.md).
+- **Full daemon + bridge + QEMU stack** run guide: [STACK.md](STACK.md).
 
 ## External-radio overlay (opt-in)
 An optional target boots the **real MeshCom `EXTERNAL_RADIO` firmware** under QEMU
