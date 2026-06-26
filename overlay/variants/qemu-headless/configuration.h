@@ -45,9 +45,14 @@
 #define LORA_CR 6
 #define LORA_BANDWIDTH 250
 #define LORA_SF 11
-#define TX_POWER_MAX 22
+// 20 dBm (not 22): the external-radio path reports this power to the LoRaHAM
+// daemon, which caps TX at 20 dBm and rejects the radio CONFIGURE above it. The
+// firmware snapshots power once at XR connect, so a runtime --txpower is NOT
+// re-synced into XR — the working value must be the compiled default. Irrelevant
+// to non-XR QEMU profiles (radio is disabled there).
+#define TX_POWER_MAX 20
 #define TX_POWER_MIN -9
-#define TX_OUTPUT_POWER 22
+#define TX_OUTPUT_POWER 20
 #define CURRENT_LIMIT 140
 #define WAIT_TX 5
 

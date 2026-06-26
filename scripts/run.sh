@@ -31,6 +31,12 @@ while [ $# -gt 0 ]; do
 done
 FLASH="$SRC/.pio/build/$ENV_NAME/flash.bin"
 
+# GPS profiles (…-gpsd) get a dedicated host-backed virtual UART1 carrying incoming
+# NMEA. Everything else is byte-for-byte unchanged.
+GPS=0
+case "$ENV_NAME" in *gpsd) GPS=1 ;; esac
+GPS_SOCK="$RUN/gps-uart1.sock"
+
 # Locate the official Espressif qemu-system-xtensa (override > PATH > idf_tools).
 if [ -n "$QEMU_OVERRIDE" ]; then
 	QEMU_BIN="$QEMU_OVERRIDE"
@@ -75,9 +81,28 @@ QEMU_CMD=(
 	-global driver=timer.esp32.timg,property=wdt_disable,value=true
 )
 
+if [ "$GPS" = "1" ]; then
+	# UART0 stays the console: mon:stdio mux's the monitor + serial0 onto stdio,
+	# exactly as -nographic does by default, so the existing UART log is unchanged.
+	# UART1 is a dedicated host Unix socket carrying incoming NMEA (QEMU is the
+	# server so it boots independently; scripts/gps-relay.py is the client). UART2
+	# is explicit null so QEMU does not auto-route it to stdio.
+	rm -f "$GPS_SOCK"
+	# shellcheck disable=SC2054
+	QEMU_CMD+=(
+		-serial mon:stdio
+		-chardev "socket,id=gps1,path=$GPS_SOCK,server=on,wait=off"
+		-serial chardev:gps1
+		-serial null
+	)
+	# Restrict the UART1 socket (and this run's log) to the owner.
+	umask 0077
+fi
+
 echo "[run] $(printf '%q ' "${QEMU_CMD[@]}")" > "$RUN/qemu-cmdline.txt"
 echo "[run] web UI:      http://127.0.0.1:18083/"
 echo "[run] net-console: 127.0.0.1:12323"
+[ "$GPS" = "1" ] && echo "[run] GPS UART1:    $GPS_SOCK    (feed: scripts/gps-relay.py --uart $GPS_SOCK …)"
 echo "[run] UART log:    $UARTLOG    (stop: scripts/stop.sh)"
 
 "${QEMU_CMD[@]}" >> "$UARTLOG" 2>&1 &

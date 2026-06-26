@@ -20,7 +20,7 @@ diff --git a/src/esp32/esp32_main.cpp b/src/esp32/esp32_main.cpp
 index 1b55ac5..40428c4 100644
 --- a/src/esp32/esp32_main.cpp
 +++ b/src/esp32/esp32_main.cpp
-@@ -877,7 +877,22 @@ void esp32setup()
+@@ -877,7 +877,30 @@ void esp32setup()
          if(!bWIFIAP)
              bWEBSERVER=false;
      }
@@ -38,6 +38,14 @@ index 1b55ac5..40428c4 100644
 +        bEXTUDP        = false;   // no external UDP
 +        bMESH          = false;   // no mesh radio activity (radio is disabled in QEMU)
 +        printlndeb("[QEMU]...headless defaults: web+console ON, wifiAP/gateway/extudp OFF");
++        #ifdef QEMU_GPS
++        // QEMU virtual GPS profiles: enable the "GPS on" user setting so the real
++        // MeshCom GPS receive path runs under emulation (NMEA arrives on UART1). This
++        // is configuration (the bGPSON flag), NOT a fabricated fix — the fix/position
++        // still come only from parsed NMEA. Compiled in ONLY for the …-gpsd targets.
++        bGPSON = true;
++        printlndeb("[QEMU]...virtual GPS enabled (bGPSON=true); NMEA expected on UART1");
++        #endif
 +    #endif
 +
 +
@@ -174,6 +182,127 @@ index 1b55ac5..40428c4 100644
  
      // SOFTSER
      #if defined(ENABLE_SOFTSER)
+diff --git a/src/gps_functions.cpp b/src/gps_functions.cpp
+index a48bd1a..d9e256e 100644
+--- a/src/gps_functions.cpp
++++ b/src/gps_functions.cpp
+@@ -710,10 +710,50 @@ void WZ_GPS_Init()
+   if(gpsInitDone)
+       return;
+ 
++#if defined(QEMU_GPS)
++  // QEMU virtual GPS: line-oriented NMEA arrives on UART1 from a host source
++  // (scripts/gps-relay.py, fed by host gpsd or a synthetic fixture). Bypass ALL
++  // hardware bring-up: no WZ_GPS_Reset (reset GPIO), no detectBaudrate (8-baud
++  // sweep), no GPSprobe/SetupUBLOX/SetupL76K (UBX/PCAS config writes to a receiver).
++  // The normal byte-by-byte TinyGPSPlus receive loop and the HDOP/satellite/age fix
++  // logic in WZ_GPS_Loop() are left COMPLETELY unchanged. GPS_RX_PIN/GPS_TX_PIN are
++  // synthetic, non-physical pin numbers (no GPS hardware exists under QEMU); the
++  // socket-backed UART ignores baud.
++  gpsInitDone = true;
++
++  GPSSerial.begin(GPS_BAUDRATE_SETFIX, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
++  Serial.printf("[GPS ]...QEMU virtual GPS on UART1 (synthetic RX=%d TX=%d @ %d baud; no hardware)\n",
++                GPS_RX_PIN, GPS_TX_PIN, GPS_BAUDRATE_SETFIX);
++
++  // Honest presence detection: a bounded, single-pass count of NMEA-like characters
++  // that ACTUALLY arrive on the virtual UART. gpsDetected is derived from real bytes,
++  // never forced true; with no host feed it stays false and WZ_GPS_Loop() is skipped.
++  gpsDetected = false;
++  {
++    uint32_t qstart = millis();
++    int qchars = 0;
++    while((millis() - qstart) < (uint32_t)WAIT_DURATION)
++    {
++      while(GPSSerial.available())
++      {
++        char qc = char(GPSSerial.read());
++        if((qc >= 'A' && qc <= 'Z') || (qc >= '0' && qc <= '9') ||
++           qc == '$' || qc == '*' || qc == ',' || qc == 0x0A || qc == 0x0D)
++          qchars++;
++      }
++      if(qchars > 10) break;
++    }
++    gpsDetected = (qchars > 10);
++    on_UBLOX = gpsDetected;   // virtual module type; no hardware probe was performed
++    Serial.printf("[GPS ]...QEMU NMEA presence: %d chars -> %s\n",
++                  qchars, gpsDetected ? "detected" : "no data yet");
++  }
++  return;
++#else
+   WZ_GPS_Reset();
+ 
+   gpsInitDone = true;
+-  
++
+   Serial.printf("[GPS ]...Init GPIO RX=%d TX=%d\n", GPS_RX_PIN, GPS_TX_PIN);
+   
+   #if defined(USE_HELTEC_T114) or defined(BOARD_T_ECHO)
+@@ -753,6 +793,7 @@ void WZ_GPS_Init()
+     Serial.println("[GPS_ERR] Erkennung fehlgeschlagen (Timeout oder kein Signal)");
+     gpsDetected = false;
+   }
++#endif
+ }
+ 
+ 
+@@ -768,6 +809,56 @@ int WZ_GPS_Loop() {
+ 
+     if (!gpsDetected) return igps;
+ 
++#ifdef MESHCOM_QEMU_GPSTEST
++    {
++        // QEMU-test-only observability (compiled in ONLY for the …-gpsd test profiles,
++        // never in default/physical/ordinary external-radio builds). Transition-based,
++        // STATUS ONLY — never prints latitude/longitude/time/altitude. It does NOT alter
++        // any firmware logic: pure reads + a Serial line on change.
++        //
++        // "usable" mirrors MeshCom's fix gate (valid location + HDOP/satellite quality)
++        // but uses the LIVE TinyGPSPlus location age so the test can deterministically
++        // observe input going stale. We ALSO print hasfix = WZ_GPS_HasFix(), the firmware's
++        // own API, which uses the snapshot gpsData.age_ms and therefore does NOT age out
++        // when input stops (documented behaviour).
++        static int s_prevUsable = -1;
++        static double s_lat = 1e9, s_lon = 1e9;
++        static int s_moves = 0;
++        bool quality = (posinfo_hdop < 6.0) && (posinfo_satcount > 5);  // int hdop: mirrors firmware gate
++        int usable = (gpsInitDone && gps.location.isValid() &&
++                      gps.location.age() < 5000 && quality) ? 1 : 0;
++        // Coordinate-free movement counter: count DISTINCT committed positions, proving
++        // the parser updates position rather than locking the first point. We compare the
++        // current committed lat/lon against the previous ones (in memory only — coordinates
++        // are NEVER logged, only the running count). isUpdated() is not used: the main loop
++        // below consumes that flag, so we diff the values directly each pass.
++        if(usable)
++        {
++            double la = gps.location.lat(), lo = gps.location.lng();
++            if(s_lat < 1e8)   // we already have a previous real position to compare against
++            {
++                double dla = (la > s_lat) ? (la - s_lat) : (s_lat - la);
++                double dlo = (lo > s_lon) ? (lo - s_lon) : (s_lon - lo);
++                if(dla > 0.00005 || dlo > 0.00005)
++                {
++                    s_moves++;
++                    Serial.printf("[GPSTEST] moved n=%d\n", s_moves);
++                }
++            }
++            s_lat = la; s_lon = lo;
++        }
++        if(usable != s_prevUsable)
++        {
++            // NOTE: print fposinfo_hdop (float) for %.1f; posinfo_hdop is int and
++            // passing it to %.1f would misalign the varargs and corrupt %s.
++            Serial.printf("[GPSTEST] fix=%d sats=%u hdop=%.1f hasfix=%d src=%s\n",
++                          usable, posinfo_satcount, (double)fposinfo_hdop,
++                          WZ_GPS_HasFix() ? 1 : 0, cTimeSource);
++            s_prevUsable = usable;
++        }
++    }
++#endif
++
+     NMEAlineIndex = 0;
+     memset(msg_text, 0x00, maxNMEAline);
+ 
 diff --git a/src/net_console.cpp b/src/net_console.cpp
 index 47e0c49..eff3925 100644
 --- a/src/net_console.cpp
