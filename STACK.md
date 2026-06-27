@@ -124,6 +124,26 @@ rm -f /tmp/xr_pw                                            # discard the HMAC s
 scripts/clean.sh                                            # remove .work/ and .run/
 ```
 
+## Changing settings
+
+Change node settings over the **net-console**, not the web GUI. Connect to the
+host-forwarded console and use `--` commands:
+
+```bash
+nc 127.0.0.1 12323          # or: socat - TCP:127.0.0.1:12323
+--help                      # list all commands
+--setcall OE1XYZ-7          # callsign (format-checked)
+--txpower 14                # TX power in dBm (keep <= 20 for the daemon)
+--pos                       # show position; --info shows the current config
+```
+
+Settings are stored in flash (NVS) and **survive restarts**; only an explicit
+`scripts/build.sh` (which writes a fresh image) resets them to defaults.
+
+> The web UI's **Save** does not round-trip under QEMU: the value usually *is* applied
+> and saved server-side, but the page can't show it (the HTTP response is lost under
+> emulation). Use the net-console, or reload the page to confirm a change.
+
 ## Notes
 
 - **Daemon must run in DIRECT TX mode** (`--tx-mode-433 direct`). MeshCom does its own
