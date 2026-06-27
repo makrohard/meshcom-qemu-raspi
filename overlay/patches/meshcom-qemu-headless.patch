@@ -402,7 +402,7 @@ index a94c3ec..d6e4b9b 100644
      printdeb("[WIFI]...Wait connect ");
  
 diff --git a/src/web_functions/web_functions.cpp b/src/web_functions/web_functions.cpp
-index 6818437..e07ce73 100644
+index 6818437..82a320b 100644
 --- a/src/web_functions/web_functions.cpp
 +++ b/src/web_functions/web_functions.cpp
 @@ -4,6 +4,8 @@
@@ -453,3 +453,19 @@ index 6818437..e07ce73 100644
  
      web_server.begin();
  
+@@ -1372,6 +1384,15 @@ void sub_page_spectrum()
+ {
+     _create_meshcom_subheader("Spectrum Scan");
+     web_client.println("<div id=\"content_inner\">");
++#ifdef QEMU_HEADLESS
++    // QEMU: no local SX126x radio (radio disabled; the real radio lives on the LoRaHAM
++    // daemon/Pi-HAT and the external-radio path cannot carry a chip-level scan). Return
++    // a clear message immediately instead of probing a non-existent chip — this avoids
++    // both the "unable to initialize spectrum scan" error and the long wait it caused.
++    web_client.println("<p>Spectrum scan is not available under QEMU. It needs direct access to a local SX126x radio chip to sweep the band, which the emulated node does not have. Run spectrum scan on a physical T-Deck.</p>");
++    web_client.println("</div>");
++    return;
++#endif
+ #if defined(SX1262X) || defined(SX126X) || defined(SX1262_V3) || defined(SX1262_E290) || defined(USING_SX1262)
+ 
+     meshcom_settings.node_specstart = 432.0;
