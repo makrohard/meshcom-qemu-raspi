@@ -157,5 +157,8 @@ Settings are stored in flash (NVS) and **survive restarts**; only an explicit
   XR connect (a runtime `--txpower` is not re-synced into XR).
 - **gpsd stays loopback-only**; the relay only reads `127.0.0.1:2947` or a fixture and
   never touches `/dev/ttyACM0`. Fixtures are synthetic; never commit real coordinates.
+- **Spectrum scan is not available under QEMU** — it sweeps RSSI off a local SX126x chip
+  the emulated node doesn't have (and the external-radio path can't carry a chip-level
+  scan). The web page shows a clear notice instead of erroring; use a physical T-Deck.
 - The default `qemu-headless` and `qemu-headless-extradio` targets are unchanged by the
   GPS work; GPS code exists only in the `…-gpsd` targets.

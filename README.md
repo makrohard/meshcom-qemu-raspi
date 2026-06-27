@@ -90,6 +90,11 @@ scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
 - On the **default** target there is no radio to drive, so web pages / net-console are
   read-only in practice; the opt-in GPS and external-radio profiles are driven as their
   sections below describe.
+- **Spectrum scan** is not available under QEMU. It reads RSSI directly off a local
+  SX126x chip (`spectralScanStart`/`spectralScanGetResult`), which the emulated node
+  does not have — and the external-radio path carries packets, not a chip-level band
+  sweep. The web page shows a clear notice (no error, no wait); use a physical T-Deck
+  for real spectrum scans.
 
 ## Tested with
 ```
