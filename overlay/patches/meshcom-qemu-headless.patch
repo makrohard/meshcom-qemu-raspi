@@ -17,7 +17,7 @@ index 15cb215..7b4c76b 100644
  
  	#if defined(NRF52_SERIES) && not defined(BOARD_HELTEC_T114) && not defined(BOARD_T_ECHO)
 diff --git a/src/esp32/esp32_main.cpp b/src/esp32/esp32_main.cpp
-index 1b55ac5..40428c4 100644
+index ce69ecb..07a7164 100644
 --- a/src/esp32/esp32_main.cpp
 +++ b/src/esp32/esp32_main.cpp
 @@ -877,7 +877,30 @@ void esp32setup()
@@ -52,7 +52,7 @@ index 1b55ac5..40428c4 100644
      if(bBMPON)
      {
          bBMEON=false;
-@@ -908,8 +923,10 @@ void esp32setup()
+@@ -908,8 +931,10 @@ void esp32setup()
  
      // Initialize battery reading
      #if not defined (BOARD_T_DECK_PRO)
@@ -63,7 +63,7 @@ index 1b55ac5..40428c4 100644
  
      #ifdef VEXT_CTRL
          pinMode(VEXT_CTRL, OUTPUT);
-@@ -1029,8 +1046,10 @@ void esp32setup()
+@@ -1029,8 +1054,10 @@ void esp32setup()
      #else
  
          #if !defined(BOARD_T_DECK_PRO) && !defined(BOARD_T5_EPAPER)
@@ -74,7 +74,7 @@ index 1b55ac5..40428c4 100644
  
      #endif
  
-@@ -1093,7 +1112,9 @@ void esp32setup()
+@@ -1093,7 +1120,9 @@ void esp32setup()
      }
      #endif
  
@@ -84,7 +84,7 @@ index 1b55ac5..40428c4 100644
  
      printfdeb("[INIT].._GW_ID: %08X\n", _GW_ID);
  
-@@ -1134,7 +1155,9 @@ void esp32setup()
+@@ -1134,7 +1163,9 @@ void esp32setup()
      #elif defined(HAS_TFT)
          initTFT();
      #else
@@ -94,7 +94,7 @@ index 1b55ac5..40428c4 100644
      #endif
  
      #if defined(BOARD_HELTEC_V3) || defined(BOARD_STICK_V3)
-@@ -1151,7 +1174,9 @@ void esp32setup()
+@@ -1151,7 +1182,9 @@ void esp32setup()
          String  version = cvers;
          displayTFT("MeshCom 4.0", version, "@BY ICSSW.ORG", "OE1KBC, OE1KFR",  "...starting now", 5000);
      #else
@@ -104,7 +104,7 @@ index 1b55ac5..40428c4 100644
      #endif
  
      //LORA CHIP present
-@@ -1231,6 +1256,13 @@ void esp32setup()
+@@ -1231,6 +1264,13 @@ void esp32setup()
          int state = radio.begin(433.175);
          radio.setDio2AsRfSwitch(true);
          radio.setTCXO(1.8);
@@ -118,7 +118,7 @@ index 1b55ac5..40428c4 100644
          #else
          int state = radio.begin(433.175);
          #endif
-@@ -1555,6 +1587,7 @@ void esp32setup()
+@@ -1555,6 +1595,7 @@ void esp32setup()
  
      bleQueue = xQueueCreate(5, sizeof(BleQueueItem));
  
@@ -126,7 +126,7 @@ index 1b55ac5..40428c4 100644
      NimBLEDevice::init(strBLEName);
  
      printfdeb("[BLE ]...Device-Address <%s>\n", NimBLEDevice::toString().c_str());
-@@ -1637,7 +1670,10 @@ void esp32setup()
+@@ -1637,7 +1678,10 @@ void esp32setup()
          pAdvertising->enableScanResponse(false);
      
      pAdvertising->start();
@@ -138,7 +138,7 @@ index 1b55ac5..40428c4 100644
      printfdeb("[BLE ]...Waiting a client connection to notify...\n");
      
      // reset GPS-Time parameter
-@@ -1709,11 +1745,17 @@ void esp32setup()
+@@ -1709,11 +1753,17 @@ void esp32setup()
  // BLE TX Function -> Node to Client
  void esp32_write_ble(uint8_t confBuff[300], uint8_t conf_len)
  {
@@ -156,7 +156,7 @@ index 1b55ac5..40428c4 100644
  }
  
  
-@@ -2673,6 +2715,17 @@ void esp32loop()
+@@ -2618,6 +2668,17 @@ void esp32loop()
      }
      #endif
  
@@ -174,7 +174,7 @@ index 1b55ac5..40428c4 100644
      // check WiFI connected with Ping every 30 sec
      if(meshcom_settings.node_netmode == 0 && (wifi_active_timer + 30000) < millis())
      {
-@@ -2702,6 +2755,7 @@ void esp32loop()
+@@ -2647,6 +2708,7 @@ void esp32loop()
              wifi_active_timer = millis();
          }
      }
@@ -182,6 +182,21 @@ index 1b55ac5..40428c4 100644
  
      // SOFTSER
      #if defined(ENABLE_SOFTSER)
+@@ -3139,7 +3201,13 @@ void esp32loop()
+         {
+             rebootAuto = 0;
+ 
+-            #ifdef ESP32
++            #if defined(QEMU_HEADLESS)
++                // QEMU: a guest SW reset wedges qemu-xtensa in the ROM bootloader (the
++                // machine never re-enters the app). Settings are already saved to
++                // NVS/flash — skip the restart and keep running; restart the stack for
++                // anything that truly needs a boot.
++                printlndeb("[QEMU]...auto-reboot suppressed (guest reset wedges QEMU); settings saved");
++            #elif defined(ESP32)
+                 ESP.restart();
+             #endif
+         }
 diff --git a/src/gps_functions.cpp b/src/gps_functions.cpp
 index a48bd1a..d9e256e 100644
 --- a/src/gps_functions.cpp
