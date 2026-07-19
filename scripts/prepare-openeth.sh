@@ -18,19 +18,25 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/.work/MeshCom-Firmware"
 LIB="$SRC/lib/openeth_compat"
 export PATH="$HOME/.local/bin:$PATH"
+# Honor a redirected PlatformIO store (PLATFORMIO_CORE_DIR); the framework lands under the
+# plain name framework-arduinoespressif32 in the redirected store too.
+PIO_STORE="${PLATFORMIO_CORE_DIR:-$HOME/.platformio}"
+# The MANAGED lhpc build passes PIO=<{root}/build/tools/platformio/.venv/bin/pio> (an absolute path);
+# standalone dev leaves it unset and falls back to `pio` on PATH (pipx).
+PIO="${PIO:-pio}"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing '$1'. Install with: $2" >&2; exit 1; }; }
-need pio   "pipx install platformio   (then: pipx ensurepath)"
+need "$PIO" "pipx install platformio   (then: pipx ensurepath)   — or let lhpc provision a managed venv"
 need curl  "sudo apt-get install -y curl"
 need find  "sudo apt-get install -y findutils"
 [ -d "$SRC/.git" ] || { echo "ERROR: workspace missing. Run setup.sh + apply-overlay.sh first." >&2; exit 1; }
 
 # 1) Ensure the Arduino framework for the QEMU env is installed/resolved.
 echo "[openeth] resolving Arduino framework (pio pkg install -e qemu-headless)…"
-( cd "$SRC" && pio pkg install -e qemu-headless >/dev/null )
+( cd "$SRC" && "$PIO" pkg install -e qemu-headless >/dev/null )
 
 # 2) Detect the bundled ESP-IDF version from the installed framework headers.
-VER_H="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" \
+VER_H="$(find "$PIO_STORE/packages/framework-arduinoespressif32" \
          -path '*esp_common/include/esp_idf_version.h' 2>/dev/null | head -1)"
 [ -n "$VER_H" ] || { echo "ERROR: esp_idf_version.h not found in resolved framework." >&2; exit 5; }
 MAJ=$(grep -E 'ESP_IDF_VERSION_MAJOR' "$VER_H" | grep -oE '[0-9]+' | head -1)
@@ -42,7 +48,7 @@ echo "[openeth] framework bundles ESP-IDF ${MAJ}.${MIN}.${PAT} -> upstream tag $
 
 # 3) Verify the framework declares the OpenETH MAC constructor (the API the driver
 #    relies on). Fail clearly if the API changed.
-ETH_MAC_H="$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -name esp_eth_mac.h | head -1)"
+ETH_MAC_H="$(find "$PIO_STORE/packages/framework-arduinoespressif32" -name esp_eth_mac.h | head -1)"
 if [ -z "$ETH_MAC_H" ] || ! grep -q 'esp_eth_mac_new_openeth' "$ETH_MAC_H"; then
 	echo "ERROR: framework esp_eth_mac.h has no esp_eth_mac_new_openeth declaration — OpenETH API changed." >&2
 	exit 6

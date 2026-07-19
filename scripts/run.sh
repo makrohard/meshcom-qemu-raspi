@@ -43,7 +43,7 @@ if [ -n "$QEMU_OVERRIDE" ]; then
 elif command -v qemu-system-xtensa >/dev/null 2>&1; then
 	QEMU_BIN="$(command -v qemu-system-xtensa)"
 else
-	QEMU_BIN="$(find "$HOME/.espressif/tools/qemu-xtensa" -path '*/qemu/bin/qemu-system-xtensa' 2>/dev/null | head -1)"
+	QEMU_BIN="$(find "${IDF_TOOLS_PATH:-$HOME/.espressif}/tools/qemu-xtensa" -path '*/qemu/bin/qemu-system-xtensa' 2>/dev/null | head -1)"
 fi
 if [ -z "${QEMU_BIN:-}" ] || [ ! -x "$QEMU_BIN" ]; then
 	echo "ERROR: official Espressif qemu-system-xtensa not found (try --qemu <path>)." >&2
