@@ -43,6 +43,19 @@ exec /usr/bin/mv "$@"
 EOS
 	chmod +x "$d/mv"
 }
+# a `mv` that fails BOTH the publish (source *.qemu-stage.*) AND the restore (source *.qemu-backup.*/...),
+# while the backup move (source = the destination) still succeeds — exercises the failed-restore branch.
+_failmv_both() {
+	local d="$1"; mkdir -p "$d"
+	cat > "$d/mv" <<'EOS'
+#!/usr/bin/env bash
+args=(); for a in "$@"; do case "$a" in -*) ;; *) args+=("$a");; esac; done
+n=${#args[@]}
+if [ "$n" -ge 2 ]; then case "${args[$((n-2))]}" in *.qemu-stage.*|*.qemu-backup.*) echo "fake mv denied" >&2; exit 1;; esac; fi
+exec /usr/bin/mv "$@"
+EOS
+	chmod +x "$d/mv"
+}
 
 if [ "$have_real" = 1 ]; then
 	# 1. valid offline publication
@@ -88,6 +101,24 @@ if [ "$have_real" = 1 ]; then
 		pass "two concurrent same-dest invocations both succeed (serialized), no leftovers"
 	else bad "concurrent invocations raced (r1 $r1, r2 $r2, leftovers $(_leftovers "$d10"))"; fi
 
+	# 13. publish AND restore BOTH fail -> the prior installation is RETAINED at <container>/install (never
+	#     deleted), the recovery path is reported, exit nonzero; a later run then recovers it + drops backup.
+	dRR="$work/retain/x"; _provision "$dRR"
+	cp "$dRR/.lhpc-qemu-verified" "$work/saved-marker"       # keep its verified marker
+	rm -f "$dRR/.lhpc-qemu-verified"                          # invalidate -> the next run RE-PROVISIONS (backs it up)
+	fbB="$work/failboth"; _failmv_both "$fbB"
+	err="$(PATH="$fbB:$PATH" LHPC_QEMU_TARBALL="$REAL" bash "$FETCH" "$dRR" 2>&1 >/dev/null)"; rc=$?
+	c="$(find "$(dirname "$dRR")" -maxdepth 1 -type d -name ".qemu-backup.x.*" 2>/dev/null | head -1)"
+	if [ "$rc" -ne 0 ] && [ -n "$c" ] && [ -x "$c/install/qemu/bin/qemu-system-xtensa" ] && [ ! -e "$dRR" ] \
+			&& printf '%s' "$err" | grep -qF "$c/install"; then
+		pass "publish+restore failure RETAINS prior install at <container>/install, reports path, exits nonzero ($rc)"
+	else bad "retain-on-failed-restore wrong (rc $rc, container '$c')"; fi
+	# make the retained install VERIFIED again (restore the marker it was verified with), then recover.
+	[ -n "$c" ] && cp "$work/saved-marker" "$c/install/.lhpc-qemu-verified"
+	if _provision "$dRR" && _valid "$dRR" && [ -n "$c" ] && [ ! -e "$c" ] && [ "$(_leftovers "$dRR")" -eq 0 ]; then
+		pass "next invocation recovers the retained verified install and removes the backup"
+	else bad "recovery of retained install failed"; fi
+
 	# 11. cleanup NEVER deletes another invocation's live staging (a DIFFERENT dest under the same parent)
 	base="$work/multi"; mkdir -p "$base"
 	other="$base/.qemu-stage.y.live"; mkdir -p "$other"; echo live > "$other/marker"
@@ -124,6 +155,20 @@ for _ in $(seq 1 60); do [ -f "$work/holder-ready" ] && break; sleep 0.05; done
 LHPC_QEMU_LOCK_WAIT=1 LHPC_QEMU_TARBALL="${REAL:-/dev/null}" bash "$FETCH" "$d6" >/dev/null 2>&1; rc=$?
 wait "$holder" 2>/dev/null
 if [ "$rc" -eq 5 ]; then pass "held lock -> second invocation returns typed BUSY (exit 5)"; else bad "busy path wrong (exit $rc)"; fi
+
+# 14. a SYMLINK lock leaf is refused (exit 4) WITHOUT modifying its target
+dLS="$work/locksym/x"; mkdir -p "$(dirname "$dLS")"
+tgt="$work/lock-target"; echo original > "$tgt"
+ln -s "$tgt" "$(dirname "$dLS")/.qemu-lock.$(basename "$dLS")"
+LHPC_QEMU_TARBALL="${REAL:-/dev/null}" bash "$FETCH" "$dLS" >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 4 ] && [ -L "$(dirname "$dLS")/.qemu-lock.$(basename "$dLS")" ] && [ "$(cat "$tgt")" = "original" ]; then
+	pass "symlink lock leaf refused (exit 4), target untouched"
+else bad "symlink lock leaf not refused safely (rc $rc, target='$(cat "$tgt" 2>/dev/null)')"; fi
+
+# 15. a NON-REGULAR (directory) lock leaf is refused (exit 4)
+dLD="$work/lockdir/x"; mkdir -p "$(dirname "$dLD")/.qemu-lock.$(basename "$dLD")"
+LHPC_QEMU_TARBALL="${REAL:-/dev/null}" bash "$FETCH" "$dLD" >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 4 ]; then pass "non-regular (directory) lock leaf refused (exit 4)"; else bad "non-regular lock leaf not refused (rc $rc)"; fi
 
 # 12. symlink destination refusal -> exit 4, the symlink is untouched
 d12="$work/sym"; mkdir -p "$d12"; ln -s /nonexistent-target "$d12/x"

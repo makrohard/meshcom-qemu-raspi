@@ -62,6 +62,17 @@ fi
 mkdir -p "$parent"
 
 # ---- PER-DESTINATION SERIALIZATION (covers recovery, validation, staging, publish, rollback, cleanup) --
+# Fail closed on a planted lock leaf: `> "$LOCK"` would FOLLOW a symlink (redirecting the lock elsewhere)
+# and would try to truncate a non-regular object. Refuse a pre-existing symlink or non-regular lock path
+# WITHOUT modifying it; a regular file or an absent path is fine (flock serialization is unchanged).
+if [ -L "$LOCK" ]; then
+	echo "[fetch-qemu] lock path is a symlink — refusing (target untouched): $LOCK" >&2
+	exit 4
+fi
+if [ -e "$LOCK" ] && [ ! -f "$LOCK" ]; then
+	echo "[fetch-qemu] lock path exists but is not a regular file — refusing: $LOCK" >&2
+	exit 4
+fi
 exec 9>"$LOCK" || { echo "[fetch-qemu] cannot open lock $LOCK" >&2; exit 1; }
 LOCK_WAIT="${LHPC_QEMU_LOCK_WAIT:-120}"
 if ! flock -w "$LOCK_WAIT" 9; then
@@ -157,11 +168,22 @@ if [ -e "$DEST" ]; then
 	fi
 fi
 if ! mv -- "$tmp_dir" "$DEST"; then
-	echo "[fetch-qemu] publish rename FAILED — restoring the prior install" >&2
-	if [ -n "$backup" ] && [ -d "$backup/install" ] && [ ! -L "$backup/install" ] && [ ! -e "$DEST" ]; then
-		mv -- "$backup/install" "$DEST" || true
+	echo "[fetch-qemu] publish rename FAILED for $DEST" >&2
+	if [ -n "$backup" ]; then
+		# Restore the prior install and CHECK the result EXPLICITLY (never suppress with `|| true`). The
+		# backup container is removed ONLY when restoration is proven — otherwise the verified install is
+		# RETAINED at <container>/install for a later run to recover.
+		if [ -d "$backup/install" ] && [ ! -L "$backup/install" ] && [ ! -e "$DEST" ] \
+				&& mv -- "$backup/install" "$DEST"; then
+			echo "[fetch-qemu] prior install RESTORED to $DEST" >&2
+			rmdir -- "$backup" 2>/dev/null || true      # remove ONLY the now-empty container
+		else
+			echo "[fetch-qemu] RESTORE FAILED — the prior verified installation is RETAINED (intact) at:" >&2
+			echo "[fetch-qemu]   ${backup}/install" >&2
+			echo "[fetch-qemu]   re-run this script for ${DEST} to recover it." >&2
+			exit 1
+		fi
 	fi
-	if [ -n "$backup" ]; then rm -rf -- "$backup" 2>/dev/null || true; fi
 	exit 1
 fi
 tmp_dir=""                                   # published -> the trap must not remove it
