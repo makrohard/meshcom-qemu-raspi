@@ -20,14 +20,15 @@
 #   pub_init             acquires a per-destination flock; refuses a symlink/non-regular dest or lock
 #                        WITHOUT modifying it; exports PUB_PARENT / PUB_DNAME / PUB_STAGE_PREFIX /
 #                        PUB_BACKUP_PREFIX; a contended lock returns busy (5) after LHPC_*_LOCK_WAIT s.
-#   pub_startup_recovery recovers an interrupted publish: dest ABSENT + a backup container holds a
+#   pub_startup_recovery refuses a symlink (incl. dangling) / non-dir dest up front, then recovers an
+#                        interrupted publish: dest ABSENT + a backup container holds a
 #                        _valid_install → restore it; dest PRESENT but NOT _valid_install while a backup
 #                        holds a _valid_install (the post-rename/pre-marker crash window) → discard the
 #                        un-verified dest and restore the known-good backup. Never sweeps, never blind-
 #                        rebuilds, never drops a backup until the destination is a _valid_install.
 #   pub_skip_if_valid    returns 0 iff the dest is already a _valid_install (caller then exits 0).
 #   pub_backup           moves any existing dest into a fresh backup container (PUB_BACKUP set); refuses
-#                        a symlink dest. No dest -> PUB_BACKUP="" (nothing to restore).
+#                        a symlink (incl. dangling) / non-dir dest first. No dest -> PUB_BACKUP="".
 #   pub_rename <staged>  atomically renames the staged tree onto the dest; the backup (if any) is left
 #                        intact for the caller to drop AFTER post-publish verification.
 #   pub_restore_backup   removes a non-symlink dest if present, restores PUB_BACKUP/install -> dest, and
@@ -47,6 +48,18 @@ pub_need() { command -v "$1" >/dev/null 2>&1 || pub_die 3 "ERROR: ${PUB_TAG:-lib
 # Sets: PUB_DEST PUB_PARENT PUB_DNAME PUB_STAGE_PREFIX PUB_BACKUP_PREFIX PUB_LOCK PUB_TAG
 # Acquires a per-destination flock on fd 9. Refuses (without following/modifying) a symlink or
 # non-regular dest/lock path.
+# _pub_refuse_bad_dest — refuse a destination that is a symlink OR an existing non-directory (exit 4,
+# untouched); an ABSENT destination is fine (a fresh install has none yet). The symlink test is FIRST and
+# is repeated at every destructive recheck: a symlink-TO-a-directory satisfies `[ -d ]`, so a symlink
+# swapped in after pub_init but before a `rm -rf`/`mv` (TOCTOU) must still be caught.
+_pub_refuse_bad_dest() {
+	if [ -L "$PUB_DEST" ]; then
+		pub_die 4 "[$PUB_TAG] destination path is a symlink — refusing: $PUB_DEST"
+	elif [ -e "$PUB_DEST" ] && [ ! -d "$PUB_DEST" ]; then
+		pub_die 4 "[$PUB_TAG] destination exists but is not a directory — refusing: $PUB_DEST"
+	fi
+}
+
 pub_init() {
 	PUB_DEST="${1:?pub_init needs a destination}"
 	local wait="${2:-120}"
@@ -59,9 +72,7 @@ pub_init() {
 	PUB_LOCK="${PUB_PARENT}/.pub-lock.${PUB_DNAME}"
 	PUB_BACKUP=""
 
-	if [ -L "$PUB_DEST" ]; then
-		pub_die 4 "[$PUB_TAG] destination path is a symlink — refusing: $PUB_DEST"
-	fi
+	_pub_refuse_bad_dest
 	mkdir -p "$PUB_PARENT"
 
 	# A planted lock leaf must not be followed or truncated: `> "$LOCK"` would follow a symlink and try
@@ -94,6 +105,9 @@ pub_sweep_orphans() {
 # pub_startup_recovery <valid_install_fn> — recover an interrupted publish before any new work.
 pub_startup_recovery() {
 	local valid="$1" _c
+	_pub_refuse_bad_dest                    # symlink (incl. BROKEN/dangling) or non-dir -> exit 4 BEFORE
+	                                        # the -e test below (a dangling symlink has -e false and would
+	                                        # otherwise be mistaken for an absent dest, deferring the refusal)
 	if [ ! -e "$PUB_DEST" ]; then
 		# dest absent: a backup container with a valid install is a pre-/mid-rename interruption.
 		for _c in "$PUB_PARENT/${PUB_BACKUP_PREFIX}"*; do
@@ -112,7 +126,8 @@ pub_startup_recovery() {
 	for _c in "$PUB_PARENT/${PUB_BACKUP_PREFIX}"*; do
 		[ -d "$_c" ] && [ ! -L "$_c" ] || continue
 		if [ -d "$_c/install" ] && [ ! -L "$_c/install" ] && "$valid" "$_c/install"; then
-			if [ ! -L "$PUB_DEST" ]; then rm -rf -- "$PUB_DEST"; fi
+			_pub_refuse_bad_dest            # symlink/non-dir (incl. TOCTOU swap) before rm -> exit 4
+			rm -rf -- "$PUB_DEST"
 			if [ ! -e "$PUB_DEST" ] && mv -- "$_c/install" "$PUB_DEST"; then
 				rmdir -- "$_c" 2>/dev/null || true
 				echo "[$PUB_TAG] recovered: discarded an un-verified destination and restored the prior verified install" >&2
@@ -132,8 +147,10 @@ pub_skip_if_valid() {
 # pub_backup — move any existing dest into a fresh backup container; sets PUB_BACKUP ("" if none).
 pub_backup() {
 	PUB_BACKUP=""
+	_pub_refuse_bad_dest                    # symlink (incl. BROKEN/dangling) or non-dir (incl. a post-
+	                                        # pub_init TOCTOU swap) -> exit 4 BEFORE the -e test, which a
+	                                        # dangling symlink (-e false) would otherwise slip past
 	[ -e "$PUB_DEST" ] || return 0
-	if [ -L "$PUB_DEST" ]; then pub_die 4 "[$PUB_TAG] destination is a symlink — refusing: $PUB_DEST"; fi
 	PUB_BACKUP="$(mktemp -d "${PUB_PARENT}/${PUB_BACKUP_PREFIX}XXXXXX")"
 	if ! mv -- "$PUB_DEST" "$PUB_BACKUP/install"; then
 		rmdir -- "$PUB_BACKUP" 2>/dev/null || true
@@ -155,7 +172,8 @@ pub_rename() {
 # backup is RETAINED (intact) for a later run to recover, and the function returns nonzero.
 pub_restore_backup() {
 	[ -n "$PUB_BACKUP" ] || return 0
-	if [ -e "$PUB_DEST" ] && [ ! -L "$PUB_DEST" ]; then rm -rf -- "$PUB_DEST"; fi
+	_pub_refuse_bad_dest                    # symlink/non-dir (incl. TOCTOU swap) before rm -> exit 4
+	[ -e "$PUB_DEST" ] && rm -rf -- "$PUB_DEST"
 	if [ -d "$PUB_BACKUP/install" ] && [ ! -L "$PUB_BACKUP/install" ] && [ ! -e "$PUB_DEST" ] \
 			&& mv -- "$PUB_BACKUP/install" "$PUB_DEST"; then
 		rmdir -- "$PUB_BACKUP" 2>/dev/null || true

@@ -11,6 +11,11 @@
 # against fetch-qemu.sh's (independently-tested, unchanged) transaction — here exercising the shared
 # lib-publish.sh that build-qemu.sh composes. Tools not invoked in FAKE mode (git clone / ninja / meson)
 # are satisfied with PATH stubs; the real strip/readelf/ldd/sha256sum/timeout/flock are used.
+#
+# EXIT CODES: 0 = all cases passed (prints ALL PASS) · 1 = a failure (prints FAILURES) · 77 = SKIPPED
+# (gcc or the LHPC link gate unavailable — e.g. a STANDALONE checkout with no sibling loraham-pi-control
+# and LHPC_LINK_GATE unset, which is EVERY standalone run). A CI runner MUST treat 77 as skip, NOT failure:
+# it is the honest signal that the suite did not run, deliberately distinct from a green exit 0.
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,9 +33,9 @@ pass() { echo "  ok:   $1"; }
 bad()  { echo "  FAIL: $1" >&2; fail=1; }
 
 if ! command -v gcc >/dev/null 2>&1; then
-	echo "  skip: no gcc — build-qemu tests need a compiled ELF stub"; echo "ALL PASS"; exit 0; fi
+	echo "  SKIP: no gcc — build-qemu tests need a compiled ELF stub (exit 77 = skipped, not a pass)"; exit 77; fi
 if [ -z "$GATE" ]; then
-	echo "  skip: link gate not found (set LHPC_LINK_GATE) — build-qemu tests skipped"; echo "ALL PASS"; exit 0; fi
+	echo "  SKIP: link gate not found (set LHPC_LINK_GATE) — build-qemu tests skipped (exit 77 = skipped, not a pass)"; exit 77; fi
 
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 
@@ -169,6 +174,13 @@ if [ "$rc" -eq 4 ] && [ -L "$d11/x" ] && [ "$(readlink "$d11/x")" = "/nonexisten
 	pass "symlink destination refused (exit 4), symlink untouched"
 else bad "symlink destination not refused safely (rc $rc)"; fi
 
+# 11b. regular-FILE (non-directory) destination refused (exit 4), file untouched - no mutation
+d11b="$work/regfile"; mkdir -p "$d11b"; printf 'SENTINEL-CONTENT' > "$d11b/x"
+LHPC_QEMU_FAKE_BUILD="$FAKE_GOOD" bash "$BUILD" "$d11b/x" --link-gate "$GATE" >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 4 ] && [ -f "$d11b/x" ] && [ ! -d "$d11b/x" ] && [ "$(cat "$d11b/x")" = "SENTINEL-CONTENT" ]; then
+	pass "regular-file destination refused (exit 4), file untouched"
+else bad "regular-file destination not refused safely (rc $rc, still-file=$([ -f "$d11b/x" ] && echo y || echo n))"; fi
+
 # 12. symlink LOCK leaf refused (exit 4) WITHOUT modifying its target
 d12="$work/locksym/x"; mkdir -p "$(dirname "$d12")"
 tgt="$work/lock-target"; echo original > "$tgt"
@@ -196,6 +208,28 @@ other="$base/.pub-stage.y.live"; mkdir -p "$other"; echo live > "$other/marker"
 if _provision "$base/x" && _valid "$base/x" && [ -d "$other" ] && [ -f "$other/marker" ]; then
 	pass "cleanup is dest-scoped — another dest's live staging untouched"
 else bad "cleanup removed another dest's staging"; fi
+
+# 16. broken/dangling-symlink DEST is refused (typed exit 4) by pub_backup AND pub_startup_recovery even
+#     though `[ -e ]` is FALSE for it — the guard must fire BEFORE each function's -e-based fast path, else
+#     a TOCTOU symlink swapped in after pub_init defers the refusal past the (expensive) build/publish.
+#     Each function runs in its OWN independent subshell (source lib + set state fresh): pub_die runs
+#     `exit`, so the first exit 4 would terminate a shared shell before the second call could run.
+d16="$work/brokensym"; mkdir -p "$d16"; ln -s /nonexistent-target-xyz "$d16/x"
+(
+	unset LIB_PUBLISH_SOURCED; . "$HERE/../scripts/lib-publish.sh"
+	PUB_TAG="unit"; PUB_DEST="$d16/x"; PUB_PARENT="$d16"; PUB_BACKUP=""
+	pub_backup
+) >/dev/null 2>&1; rc_b=$?
+(
+	unset LIB_PUBLISH_SOURCED; . "$HERE/../scripts/lib-publish.sh"
+	PUB_TAG="unit"; PUB_DEST="$d16/x"; PUB_PARENT="$d16"
+	_dummy_valid() { return 0; }
+	pub_startup_recovery _dummy_valid
+) >/dev/null 2>&1; rc_r=$?
+if [ "$rc_b" -eq 4 ] && [ "$rc_r" -eq 4 ] \
+		&& [ -L "$d16/x" ] && [ "$(readlink "$d16/x")" = "/nonexistent-target-xyz" ]; then
+	pass "broken-symlink dest refused (exit 4) by pub_backup + pub_startup_recovery, symlink untouched"
+else bad "broken-symlink dest not refused (exit 4) by pub_backup/pub_startup_recovery (rc_b=$rc_b rc_r=$rc_r)"; fi
 
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "FAILURES" >&2; fi
 exit "$fail"

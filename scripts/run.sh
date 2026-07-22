@@ -62,7 +62,13 @@ else
 	echo "[run] WARN: for the exact tested build: python \$IDF_PATH/tools/idf_tools.py install qemu-xtensa@$KNOWN_GOOD_QEMU" >&2
 fi
 [ -f "$FLASH" ] || { echo "ERROR: $FLASH not found. Run scripts/build.sh first." >&2; exit 1; }
-ldconfig -p 2>/dev/null | grep -q 'libslirp\.so\.0' || {
+# libslirp is REQUIRED for the QEMU user-net (open_eth). Prefer the ldconfig cache, but fall back to a
+# direct file check: a service manager may run this with a minimal PATH that omits /usr/sbin (where
+# ldconfig lives), and an off-PATH ldconfig must NOT be read as "library missing" (live finding — it
+# false-failed under lhpc's stack-run environment on a Pi Zero 2W). The library being present on disk is
+# authoritative regardless of whether ldconfig is reachable.
+{ ldconfig -p 2>/dev/null | grep -q 'libslirp\.so\.0'; } \
+	|| ls /lib/*/libslirp.so.0 /usr/lib/*/libslirp.so.0 /usr/lib/libslirp.so.0 2>/dev/null | grep -q libslirp || {
 	echo "ERROR: libslirp.so.0 missing. Install with: sudo apt-get install -y libslirp0" >&2; exit 1; }
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
