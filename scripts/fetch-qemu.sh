@@ -149,8 +149,28 @@ if [ ! -f "$staged_bin" ] || [ -L "$staged_bin" ] || [ ! -x "$staged_bin" ]; the
 	echo "[fetch-qemu] expected binary missing/invalid after unpack: $BIN_REL" >&2
 	exit 1
 fi
-if ! "$staged_bin" --version 2>/dev/null | grep -qF "$PIN"; then
-	echo "[fetch-qemu] extracted qemu is not the pinned build ${PIN} — refusing" >&2
+# Prove the extracted binary actually RUNS and is the pinned build. The failure text must be HONEST:
+# the sha256 already matched above, so a `--version` failure here is almost always a MISSING SHARED
+# LIBRARY on a headless box (the prebuilt Espressif binary hard-links libSDL2), NOT a wrong build.
+# Capture the loader error (do NOT discard stderr) and, if the loader named an unresolved library,
+# report THAT — a misleading "not the pinned build" sent operators hunting a non-existent pin mismatch.
+ver_out="$("$staged_bin" --version 2>&1)" || ver_rc=$?
+ver_rc="${ver_rc:-0}"
+if ! printf '%s' "$ver_out" | grep -qF "$PIN"; then
+	missing=""
+	# Loader message: "error while loading shared libraries: libFOO.so: cannot open shared object file"
+	missing="$(printf '%s\n' "$ver_out" | sed -n 's/.*loading shared libraries: \([^:]*\):.*/\1/p' | head -1)"
+	if [ -z "$missing" ] && command -v ldd >/dev/null 2>&1; then
+		missing="$(ldd "$staged_bin" 2>/dev/null | awk '/=> not found/{print $1}' | tr '\n' ' ')"
+	fi
+	if [ -n "$missing" ]; then
+		echo "[fetch-qemu] the sha256-verified prebuilt qemu cannot load shared libraries: ${missing}" >&2
+		echo "[fetch-qemu] this prebuilt binary links a display/audio stack absent on a headless box." >&2
+		echo "[fetch-qemu] use the source-built emulator (scripts/build-qemu.sh) instead of this tarball." >&2
+	else
+		echo "[fetch-qemu] extracted qemu did not report the pinned build ${PIN} (rc=${ver_rc}); output:" >&2
+		printf '%s\n' "$ver_out" | sed 's/^/  /' >&2
+	fi
 	exit 1
 fi
 printf 'pin=%s\nsha256=%s\n' "$PIN" "$SHA" > "$tmp_dir/$MARKER_REL"
