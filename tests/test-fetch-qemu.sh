@@ -177,5 +177,15 @@ if [ "$rc" -eq 4 ] && [ -L "$d12/x" ] && [ "$(readlink "$d12/x")" = "/nonexisten
 	pass "symlink destination refused (exit 4), symlink untouched"
 else bad "symlink destination not refused safely (rc $rc)"; fi
 
+# 16. HONEST loader-error reporting: the misleading "not the pinned build" refusal is gone, and the
+#     script reports the missing shared library when the sha256-verified prebuilt binary cannot load on
+#     a headless box (the real path needs the pinned tarball on a display-less box; proven live). This
+#     guards the 2b change against regression.
+if ! grep -q 'is not the pinned build' "$FETCH" \
+		&& grep -q 'cannot load shared libraries' "$FETCH" \
+		&& grep -q 'loading shared libraries' "$FETCH"; then
+	pass "honest loader-error reporting present; misleading 'not the pinned build' text removed"
+else bad "fetch-qemu honest loader-error reporting missing/regressed"; fi
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "FAILURES" >&2; fi
 exit "$fail"
