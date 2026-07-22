@@ -31,6 +31,19 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing '$1'." >&2; e
 need curl "sudo apt-get install -y curl"
 need python3 "sudo apt-get install -y python3"
 
+# Optional: --qemu <path> is FORWARDED to run.sh for the self-boot case. Without it the
+# self-boot inherits run.sh's own discovery (PATH > IDF tools), which knows nothing about a
+# caller-managed build — exactly how a fresh lhpc install (managed in-root qemu, clean PATH,
+# no ~/.espressif) failed this test while probing an already-running guest still passed.
+QEMU_FWD=()
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--qemu) [ $# -ge 2 ] || { echo "ERROR: --qemu needs a path" >&2; exit 2; }
+		        QEMU_FWD=(--qemu "$2"); shift 2 ;;
+		*) echo "[test] ignoring unknown argument '$1'" >&2; shift ;;
+	esac
+done
+
 pid_alive() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null || echo 0)" 2>/dev/null; }
 uart_target() { local t; t="$(readlink "$UART" 2>/dev/null || echo "")"; [ -n "$t" ] && echo "$RUN/$t" || echo "$UART"; }
 
@@ -49,7 +62,7 @@ else
 	ENV_NAME="$(basename "$(dirname "$FLASH")")"
 	prev_uart="$(readlink "$UART" 2>/dev/null || echo "")"
 	echo "[test] no running guest — booting $ENV_NAME for a self-contained test"
-	"$ROOT/scripts/run.sh" --env "$ENV_NAME" > "$RUN/test-boot.log" 2>&1 &
+	"$ROOT/scripts/run.sh" --env "$ENV_NAME" ${QEMU_FWD[@]+"${QEMU_FWD[@]}"} > "$RUN/test-boot.log" 2>&1 &
 	trap '"$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true' EXIT
 	self_booted=1
 	# Wait until run.sh has BOTH recorded the pid AND repointed uart-latest.log to a NEW file.
