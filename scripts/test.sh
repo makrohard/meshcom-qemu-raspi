@@ -79,7 +79,7 @@ fi
 # --- Readiness: the firmware reached its boot marker in THIS run's UART log ------------------
 echo "[test] waiting for firmware boot marker in $(basename "$BOOT_LOG")…"
 booted=0
-for _ in $(seq 1 60); do        # up to ~120s
+for _ in $(seq 1 300); do       # up to ~600s — a Pi Zero 2W needs ~5-6 min just to BOOT the node
 	grep -qE "$MARKER" "$BOOT_LOG" 2>/dev/null && { booted=1; break; }
 	# a self-booted QEMU that dies before booting is a real failure (e.g. bad image)
 	[ "$self_booted" = "1" ] && ! pid_alive && { echo "[test] FAIL: QEMU exited before the firmware booted (see $RUN/test-boot.log)"; exit 1; }
