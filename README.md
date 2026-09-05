@@ -98,7 +98,7 @@ scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
 
 ## Tested with
 ```
-- MeshCom (default pin):  v4.35p.08.29  (sha 2cb6bb4d3c9f8403d2f4278b6a01ae329ed6dc83)
+- MeshCom (default pin):  dev 674413c = v4.35p.08.29 + 34  (sha 674413ce38bebcc02969a4c1b754a6f1850bf4ba)
 - Also verified against:  upstream/dev  (latest, via --dev)
 - PlatformIO:             6.1.19
 - Arduino framework:      framework-arduinoespressif32 3.20017.241212 (Arduino-ESP32 2.0.17)
