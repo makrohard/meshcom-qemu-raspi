@@ -68,8 +68,14 @@ elif [ -d "$SRC/.git" ]; then
 	git -C "$SRC" fetch --depth 1 origin "$REF"
 	git -C "$SRC" checkout -q FETCH_HEAD
 else
+	# fetch-by-ref, not `clone --branch`: a pinned commit SHA is a valid ref here (the
+	# lhpc manifest passes one), and `--branch` accepts only branch and tag names.
 	echo "[setup] cloning $UPSTREAM_URL ($REF) -> $SRC"
-	git clone --depth 1 --branch "$REF" "$UPSTREAM_URL" "$SRC"
+	rm -rf "$SRC"
+	git init -q "$SRC"
+	git -C "$SRC" remote add origin "$UPSTREAM_URL"
+	git -C "$SRC" fetch --depth 1 origin "$REF"
+	git -C "$SRC" checkout -q FETCH_HEAD
 fi
 
 SHA="$(git -C "$SRC" rev-parse HEAD)"
