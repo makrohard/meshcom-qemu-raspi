@@ -207,7 +207,7 @@ index 109f6e3..9f77b49 100644
              #endif
          }
 diff --git a/src/gps_functions.cpp b/src/gps_functions.cpp
-index 7cb76b1..5d6ce2a 100644
+index 7cb76b1..d8351f9 100644
 --- a/src/gps_functions.cpp
 +++ b/src/gps_functions.cpp
 @@ -882,6 +882,52 @@ void WZ_GPS_Init()
@@ -271,7 +271,7 @@ index 7cb76b1..5d6ce2a 100644
  }
  
  
-@@ -957,6 +1004,56 @@ void WZ_GPS_Feed()
+@@ -957,11 +1004,70 @@ void WZ_GPS_Feed()
          return;
  
      // Alle verfuegbaren Bytes lesen (non-blocking)
@@ -328,6 +328,20 @@ index 7cb76b1..5d6ce2a 100644
      #if defined(USE_HELTEC_T114) or defined(BOARD_T_ECHO)
      while (Serial1.available())
      #else
++    #if defined(QEMU_GPS)
++    // QEMU: the socket-backed virtual UART has no baud pacing, so a live NMEA feed can keep
++    // this per-loop drain busy for minutes and starve loop() (the net-console goes deaf).
++    // Bound the bytes taken per pass to about what 9600 baud delivers in 250 ms; the rest
++    // waits for the next pass. Hardware keeps the unbounded drain.
++    int qemu_gps_budget = 256;
++    while (GPSSerial.available() && qemu_gps_budget-- > 0)
++    #else
+     while (GPSSerial.available())
+     #endif
++    #endif
+     {
+         #if defined(USE_HELTEC_T114) or defined(BOARD_T_ECHO)
+         int ic = Serial1.read();
 diff --git a/src/net_console.cpp b/src/net_console.cpp
 index c131312..be7943e 100644
 --- a/src/net_console.cpp
