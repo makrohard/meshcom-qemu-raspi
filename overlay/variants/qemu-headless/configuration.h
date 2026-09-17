@@ -45,14 +45,17 @@
 #define LORA_CR 6
 #define LORA_BANDWIDTH 250
 #define LORA_SF 11
-// 20 dBm (not 22): the external-radio path reports this power to the LoRaHAM
-// daemon, which caps TX at 20 dBm and rejects the radio CONFIGURE above it. The
-// firmware snapshots power once at XR connect, so a runtime --txpower is NOT
-// re-synced into XR — the working value must be the compiled default. Irrelevant
-// to non-XR QEMU profiles (radio is disabled there).
-#define TX_POWER_MAX 20
-#define TX_POWER_MIN -9
-#define TX_OUTPUT_POWER 20
+// 17 dBm: the external-radio path reports this power to the LoRaHAM daemon, which
+// accepts 2..17 dBm on SX127x boards and rejects a CONFIGURE outside it — 17 is the
+// PA_BOOST maximum, and below 2 the chip drives RFO instead, which is not the pin the
+// antenna is on. (Until daemon 1.0.0 the range was 0..20 and this was 20; a firmware
+// built at 20 cannot configure an SX127x daemon at all.) The firmware snapshots power
+// once at XR connect, so a runtime --txpower is NOT re-synced into XR — the working
+// value must be the compiled default. Irrelevant to non-XR QEMU profiles (radio is
+// disabled there).
+#define TX_POWER_MAX 17
+#define TX_POWER_MIN 2
+#define TX_OUTPUT_POWER 17
 #define CURRENT_LIMIT 140
 #define WAIT_TX 5
 

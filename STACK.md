@@ -112,7 +112,7 @@ Open **http://127.0.0.1:18083/**. Expected: bridge logs `configured; radio ready
 guest gets a GPS fix (`src=[GPS]` in the UI), and messages flow to/from the T-Deck.
 
 **The T-Deck must use the same radio channel** as the node, or they won't interoperate:
-`433.175 MHz, BW 250 kHz, SF 11, CR 6, sync 0x2B, ≤20 dBm`.
+`433.175 MHz, BW 250 kHz, SF 11, CR 6, sync 0x2B, 17 dBm`.
 
 ### Bring the stack down
 
@@ -133,7 +133,7 @@ host-forwarded console and use `--` commands:
 nc 127.0.0.1 12323          # or: socat - TCP:127.0.0.1:12323
 --help                      # list all commands
 --setcall OE1XYZ-7          # callsign (format-checked)
---txpower 14                # TX power in dBm (keep <= 20 for the daemon)
+--txpower 14                # TX power in dBm (the daemon accepts 2..17 on SX127x)
 --pos                       # show position; --info shows the current config
 ```
 
@@ -152,9 +152,12 @@ Settings are stored in flash (NVS) and **survive restarts**; only an explicit
   `/tmp/loraconf433.sock`.)
 - **Start the GPS relay before the node** — the firmware's GPS init is one-shot, so NMEA
   must be flowing when it runs (the relay waits for the UART socket, so launch it first).
-- **TX power is 20 dBm** (`overlay/variants/qemu-headless/configuration.h`): the daemon
-  caps TX at 20 and rejects a higher CONFIGURE, and the firmware snapshots power once at
-  XR connect (a runtime `--txpower` is not re-synced into XR).
+- **TX power is 17 dBm** (`overlay/variants/qemu-headless/configuration.h`): since daemon
+  1.0.0 the accepted range on SX127x boards is **2..17 dBm** (17 is the PA_BOOST maximum;
+  below 2 the chip drives RFO, not the antenna pin), and a CONFIGURE outside it is rejected
+  outright — a firmware built at the old 20 cannot configure the radio at all. The firmware
+  snapshots power once at XR connect, so a runtime `--txpower` is not re-synced into XR;
+  the compiled default is what matters. SX1262 boards (Waveshare) still accept 0..20.
 - **gpsd stays loopback-only**; the relay only reads `127.0.0.1:2947` or a fixture and
   never touches `/dev/ttyACM0`. Fixtures are synthetic; never commit real coordinates.
 - **Spectrum scan is not available under QEMU** — it sweeps RSSI off a local SX126x chip
