@@ -17,19 +17,19 @@ index b14a86d..f7a1924 100644
  
  	#if defined(NRF52_SERIES) && not defined(BOARD_HELTEC_T114) && not defined(BOARD_T_ECHO)
 diff --git a/src/configuration_global.h b/src/configuration_global.h
-index ac82429..c9031cc 100644
+index a346a61..cc58051 100644
 --- a/src/configuration_global.h
 +++ b/src/configuration_global.h
 @@ -1,3 +1,4 @@
 +#pragma once
  #define SOURCE_VERSION "4.35"
- #define SOURCE_VERSION_SUB "s"
- #define SOURCE_VERSION_WEB_SUB "s"
+ #define SOURCE_VERSION_SUB "t"
+ #define SOURCE_VERSION_WEB_SUB "t"
 diff --git a/src/esp32/esp32_main.cpp b/src/esp32/esp32_main.cpp
-index 109f6e3..9f77b49 100644
+index 630bd3d..f32581c 100644
 --- a/src/esp32/esp32_main.cpp
 +++ b/src/esp32/esp32_main.cpp
-@@ -945,7 +945,30 @@ void esp32setup()
+@@ -1013,7 +1013,30 @@ void esp32setup()
          if(!bWIFIAP)
              bWEBSERVER=false;
      }
@@ -61,7 +61,7 @@ index 109f6e3..9f77b49 100644
      if(bBMPON)
      {
          bBMEON=false;
-@@ -979,8 +1002,10 @@ void esp32setup()
+@@ -1047,8 +1070,10 @@ void esp32setup()
  
      // Initialize battery reading
      #if not defined (BOARD_T_DECK_PRO)
@@ -72,7 +72,7 @@ index 109f6e3..9f77b49 100644
  
      #ifdef VEXT_CTRL
          pinMode(VEXT_CTRL, OUTPUT);
-@@ -1100,8 +1125,10 @@ void esp32setup()
+@@ -1168,8 +1193,10 @@ void esp32setup()
      #else
  
          #if !defined(BOARD_T_DECK_PRO) && !defined(BOARD_T5_EPAPER)
@@ -83,7 +83,7 @@ index 109f6e3..9f77b49 100644
  
      #endif
  
-@@ -1164,7 +1191,9 @@ void esp32setup()
+@@ -1232,7 +1259,9 @@ void esp32setup()
      }
      #endif
  
@@ -93,7 +93,7 @@ index 109f6e3..9f77b49 100644
  
      printfdeb("[INIT].._GW_ID: %08X\n", _GW_ID);
  
-@@ -1205,7 +1234,9 @@ void esp32setup()
+@@ -1273,7 +1302,9 @@ void esp32setup()
      #elif defined(HAS_TFT)
          initTFT();
      #else
@@ -103,7 +103,7 @@ index 109f6e3..9f77b49 100644
      #endif
  
      #if defined(BOARD_HELTEC_V3) || defined(BOARD_STICK_V3)
-@@ -1222,7 +1253,9 @@ void esp32setup()
+@@ -1290,7 +1321,9 @@ void esp32setup()
          String  version = cvers;
          displayTFT("MeshCom 4.0", version, "@BY ICSSW.ORG", "OE1KBC, OE1KFR",  "...starting now", 5000);
      #else
@@ -113,7 +113,7 @@ index 109f6e3..9f77b49 100644
      #endif
  
      //LORA CHIP present
-@@ -1308,6 +1341,13 @@ void esp32setup()
+@@ -1399,6 +1432,13 @@ void esp32setup()
          int state = radio.begin(433.175);
          radio.setDio2AsRfSwitch(true);
          radio.setTCXO(1.8);
@@ -127,7 +127,7 @@ index 109f6e3..9f77b49 100644
          #else
          int state = radio.begin(433.175);
          #endif
-@@ -1674,6 +1714,7 @@ void esp32setup()
+@@ -1765,6 +1805,7 @@ void esp32setup()
  
      bleQueue = xQueueCreate(5, sizeof(BleQueueItem));
  
@@ -135,7 +135,7 @@ index 109f6e3..9f77b49 100644
      NimBLEDevice::init(strBLEName);
  
      printfdeb("[BLE ]...Device-Address <%s>\n", NimBLEDevice::toString().c_str());
-@@ -1763,7 +1804,10 @@ void esp32setup()
+@@ -1854,7 +1895,10 @@ void esp32setup()
      #else
      pAdvertising->start();
      #endif
@@ -147,7 +147,7 @@ index 109f6e3..9f77b49 100644
      printfdeb("[BLE ]...Waiting a client connection to notify...\n");
      
      // reset GPS-Time parameter
-@@ -1843,11 +1887,17 @@ void esp32setup()
+@@ -1934,11 +1978,17 @@ void esp32setup()
  // BLE TX Function -> Node to Client
  void esp32_write_ble(uint8_t confBuff[300], uint8_t conf_len)
  {
@@ -165,7 +165,7 @@ index 109f6e3..9f77b49 100644
  }
  
  
-@@ -2866,6 +2916,17 @@ void esp32loop()
+@@ -2957,6 +3007,17 @@ void esp32loop()
      }
      #endif
  
@@ -183,7 +183,7 @@ index 109f6e3..9f77b49 100644
      // check WiFI connected with Ping every 30 sec
      if(meshcom_settings.node_netmode == 0 && (uint32_t)(millis() - wifi_active_timer) >= 30000)
      {
-@@ -2896,6 +2957,7 @@ void esp32loop()
+@@ -2987,6 +3048,7 @@ void esp32loop()
              wifi_active_timer = millis();
          }
      }
@@ -191,7 +191,7 @@ index 109f6e3..9f77b49 100644
  
      // SOFTSER
      #if defined(ENABLE_SOFTSER)
-@@ -3455,7 +3517,13 @@ void esp32loop()
+@@ -3552,7 +3614,13 @@ void esp32loop()
          {
              rebootAuto = 0;
  
@@ -207,10 +207,10 @@ index 109f6e3..9f77b49 100644
              #endif
          }
 diff --git a/src/gps_functions.cpp b/src/gps_functions.cpp
-index 7cb76b1..d8351f9 100644
+index a75d3e6..3115bed 100644
 --- a/src/gps_functions.cpp
 +++ b/src/gps_functions.cpp
-@@ -882,6 +882,52 @@ void WZ_GPS_Init()
+@@ -894,6 +894,52 @@ void WZ_GPS_Init()
    if(gpsInitDone)
        return;
  
@@ -263,7 +263,7 @@ index 7cb76b1..d8351f9 100644
    WZ_GPS_Reset();
  
    gpsInitDone = true;
-@@ -937,6 +983,7 @@ void WZ_GPS_Init()
+@@ -951,6 +997,7 @@ void WZ_GPS_Init()
      Serial.println("[GPS_ERR] Erkennung fehlgeschlagen (Timeout oder kein Signal)");
      gpsDetected = false;
    }
@@ -271,7 +271,7 @@ index 7cb76b1..d8351f9 100644
  }
  
  
-@@ -957,11 +1004,70 @@ void WZ_GPS_Feed()
+@@ -971,11 +1018,70 @@ void WZ_GPS_Feed()
          return;
  
      // Alle verfuegbaren Bytes lesen (non-blocking)
@@ -343,7 +343,7 @@ index 7cb76b1..d8351f9 100644
          #if defined(USE_HELTEC_T114) or defined(BOARD_T_ECHO)
          int ic = Serial1.read();
 diff --git a/src/net_console.cpp b/src/net_console.cpp
-index c131312..be7943e 100644
+index 65b6822..2897dd5 100644
 --- a/src/net_console.cpp
 +++ b/src/net_console.cpp
 @@ -25,6 +25,7 @@
@@ -354,7 +354,7 @@ index c131312..be7943e 100644
  #include <netinet/in.h>
  #include <freertos/FreeRTOS.h>
  #include <freertos/semphr.h>
-@@ -306,8 +307,14 @@ void loopNetConsole()
+@@ -345,8 +346,14 @@ void loopNetConsole()
      // und damit einen Panic/Reboot. Daher hier frueh aussteigen, solange kein WiFi verbunden
      // ist. s_server_pending bleibt erhalten, sodass der Listening-Socket geoeffnet wird, sobald
      // die WiFi-Verbindung steht. (Ohne IP kann die Netconsole ohnehin nicht arbeiten.)
@@ -370,7 +370,7 @@ index c131312..be7943e 100644
      // Open listening socket on first call (triggered by startNetConsole)
      if (s_server_pending)
 diff --git a/src/udp_functions.cpp b/src/udp_functions.cpp
-index eb3c20d..46906ec 100644
+index 511c144..96aaf07 100644
 --- a/src/udp_functions.cpp
 +++ b/src/udp_functions.cpp
 @@ -4,6 +4,8 @@
@@ -382,7 +382,7 @@ index eb3c20d..46906ec 100644
  #include <udp_functions.h>
  #include <extudp_functions.h>
  #include <debugconf.h>
-@@ -1099,8 +1101,39 @@ void wifiDnsPoll()
+@@ -1096,8 +1098,39 @@ void wifiDnsPoll()
    }
  }
  
@@ -422,7 +422,7 @@ index eb3c20d..46906ec 100644
    #if defined(HAS_ETHERNET)
  
        if(meshcom_settings.node_netmode == 1)
-@@ -1285,6 +1318,17 @@ bool doWiFiConnect()
+@@ -1282,6 +1315,17 @@ bool doWiFiConnect()
  
    printdeb(".");
    iWlanWait++;
@@ -441,7 +441,7 @@ index eb3c20d..46906ec 100644
    if(iWlanWait == 11)
      printfdeb("\n[WIFI]...ssid<%s> connection error\n", meshcom_settings.node_ssid);
 diff --git a/src/web_functions/web_functions.cpp b/src/web_functions/web_functions.cpp
-index cb0dca4..b89363d 100644
+index 8cabdc7..9a88f65 100644
 --- a/src/web_functions/web_functions.cpp
 +++ b/src/web_functions/web_functions.cpp
 @@ -4,6 +4,8 @@
@@ -453,7 +453,7 @@ index cb0dca4..b89363d 100644
  #include <configuration.h>
  #include <debugconf.h>
  #include "web_functions.h"
-@@ -110,20 +112,29 @@ void startWebserver()
+@@ -113,20 +115,29 @@ void startWebserver()
      bool ethernet_mode = false;
      #endif
  
@@ -484,7 +484,7 @@ index cb0dca4..b89363d 100644
      if(bMDNSOK)
      {
          if (!MDNS.begin(meshcom_settings.node_call))
-@@ -146,6 +157,7 @@ void startWebserver()
+@@ -149,6 +160,7 @@ void startWebserver()
              }
          }
      }
@@ -492,7 +492,7 @@ index cb0dca4..b89363d 100644
  
      web_server.begin();
  
-@@ -1718,6 +1730,15 @@ void sub_page_spectrum()
+@@ -1979,6 +1991,15 @@ void sub_page_spectrum()
  {
      _create_meshcom_subheader("Spectrum Scan");
      web_client.println("<div id=\"content_inner\">");
