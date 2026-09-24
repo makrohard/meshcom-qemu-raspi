@@ -24,7 +24,7 @@ UPSTREAM_URL="https://github.com/icssw-org/MeshCom-Firmware.git"
 
 # Known-working, pinned stable release the overlay is verified against.
 # (Configurable: edit this, or override per-run with --dev / --ref.)
-DEFAULT_REF="674413ce38bebcc02969a4c1b754a6f1850bf4ba"   # icssw-org dev tip, v4.35p.08.29 + 34
+DEFAULT_REF="80b85a5a2f36e26970ea02fea0d6e09ed68c1d61"   # icssw-org dev, v4.35t.09.20 — the lhpc manifest pin
 REF="$DEFAULT_REF"
 # Opt-in: clone the firmware from a LOCAL repository/path instead of upstream.
 # Used by the external-radio validation to run a local feature branch WITHOUT
