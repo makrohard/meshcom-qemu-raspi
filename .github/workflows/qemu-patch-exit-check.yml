@@ -1,0 +1,45 @@
+# Weekly reminder for the temporary QEMU patch in patches/qemu/ (see patches/qemu/README.md).
+# It comments on the tracking issue when Espressif's PR changes state or when an Espressif release tag
+# contains the change, so the patch can be dropped. It posts each distinct finding only once.
+# Note: GitHub disables scheduled workflows after 60 days without commits to this repository; the
+# tracking issue says so, and the notifications on espressif/qemu#182/#183 remain the primary signal.
+name: qemu-patch-exit-check
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+env:
+  TRACKING_ISSUE: '1'
+  UPSTREAM_PR: '183'
+  PINNED_TAG_DATE: '20260417'
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Espressif for the change
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          msg=""
+          pr=$(gh api "repos/espressif/qemu/pulls/$UPSTREAM_PR" --jq '"\(.state) merged=\(.merged)"')
+          echo "PR #$UPSTREAM_PR: $pr"
+          case "$pr" in open*) ;; *) msg="espressif/qemu#$UPSTREAM_PR is now $pr." ;; esac
+          for tag in $(gh api "repos/espressif/qemu/tags?per_page=100" --paginate --jq '.[].name' | grep -E '^esp-develop-.*-[0-9]{8}$' | sort -t- -k4); do
+            d=${tag##*-}; [ "$d" -gt "$PINNED_TAG_DATE" ] || continue
+            if gh api "repos/espressif/qemu/contents/hw/misc/esp32_dport.c?ref=$tag" --jq .content | base64 -d | grep -q TYPE_ESP32_CACHE_IOMMU; then
+              msg="$msg Release tag $tag contains the change: drop patches/qemu/ and pin $tag (steps in patches/qemu/README.md)."
+            else
+              echo "tag $tag: does not contain the change"
+            fi
+          done
+          [ -n "$msg" ] || { echo "nothing new"; exit 0; }
+          body="exit-check: $msg"
+          if gh api "repos/$GITHUB_REPOSITORY/issues/$TRACKING_ISSUE/comments" --paginate --jq '.[].body' | grep -qxF "$body"; then
+            echo "already reported"; exit 0
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/issues/$TRACKING_ISSUE/comments" -f body="$body" >/dev/null
+          echo "commented: $body"

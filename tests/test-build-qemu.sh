@@ -27,7 +27,7 @@ GATE_CANDIDATES=(
 GATE=""
 for g in "${GATE_CANDIDATES[@]}"; do [ -n "$g" ] && [ -f "$g" ] && GATE="$g" && break; done
 
-COMMIT="abb5ce24386972e048b401f9eca10e90b8427a20"
+COMMIT="40edccac415693c5130f91c01d84176ae6008566"
 fail=0
 pass() { echo "  ok:   $1"; }
 bad()  { echo "  FAIL: $1" >&2; fail=1; }
@@ -57,7 +57,7 @@ _mkstub() {  # $1=out  $2=smoke-mode(good|bad)
 #include <unistd.h>
 int main(int argc, char **argv){
   for(int i=1;i<argc;i++){
-    if(!strcmp(argv[i],"--version")){printf("QEMU emulator version 9.0.0 (esp-develop-9.0.0-20240606)\\n");return 0;}
+    if(!strcmp(argv[i],"--version")){printf("QEMU emulator version 9.2.2\\n");return 0;}
     if(!strcmp(argv[i],"-machine")&&i+1<argc&&!strcmp(argv[i+1],"help")){
       printf("Supported machines are:\\nnone\\nesp32                Espressif ESP32\\n");return 0;}
   }
@@ -230,6 +230,31 @@ if [ "$rc_b" -eq 4 ] && [ "$rc_r" -eq 4 ] \
 		&& [ -L "$d16/x" ] && [ "$(readlink "$d16/x")" = "/nonexistent-target-xyz" ]; then
 	pass "broken-symlink dest refused (exit 4) by pub_backup + pub_startup_recovery, symlink untouched"
 else bad "broken-symlink dest not refused (exit 4) by pub_backup/pub_startup_recovery (rc_b=$rc_b rc_r=$rc_r)"; fi
+
+# downstream patches: listed in the marker, and a changed patch forces a rebuild
+dp="$work/patchmark/x"
+if _provision "$dp" && grep -q '^qemu_patch=0001-.*sha256=[0-9a-f]\{64\}$' "$dp/.lhpc-qemu-built"; then
+	pass "marker lists the downstream patch with its sha256"
+else bad "marker does not list the downstream patch"; fi
+tree="$work/tree"; mkdir -p "$tree"; cp -a "$HERE/../scripts" "$HERE/../patches" "$tree/"
+dt="$work/patchchange/x"
+_tbq() { LHPC_QEMU_FAKE_BUILD="$FAKE_GOOD" LHPC_QEMU_SMOKE_SECS=3 \
+	bash "$tree/scripts/build-qemu.sh" "$1" --link-gate "$GATE" >"$work/out.log" 2>&1; }
+_tbq "$dt"; sha1="$(grep '^config_sha256=' "$dt/.lhpc-qemu-built" 2>/dev/null)"
+printf '\n' >> "$(ls "$tree"/patches/qemu/*.patch | head -1)"
+_tbq "$dt"; sha2="$(grep '^config_sha256=' "$dt/.lhpc-qemu-built" 2>/dev/null)"
+if [ -n "$sha1" ] && [ -n "$sha2" ] && [ "$sha1" != "$sha2" ] && ! grep -q "already source-built" "$work/out.log"; then
+	pass "changed downstream patch changes the config hash and forces a rebuild"
+else bad "changed downstream patch did not force a rebuild ($sha1 / $sha2)"; fi
+
+# the exit path: with NO downstream patch the build must still publish a valid install
+tree0="$work/tree0"; mkdir -p "$tree0"; cp -a "$HERE/../scripts" "$HERE/../patches" "$tree0/"; rm -f "$tree0"/patches/qemu/*.patch
+d0="$work/nopatch/x"
+LHPC_QEMU_FAKE_BUILD="$FAKE_GOOD" LHPC_QEMU_SMOKE_SECS=3 \
+	bash "$tree0/scripts/build-qemu.sh" "$d0" --link-gate "$GATE" >"$work/out.log" 2>&1; rc=$?
+if [ "$rc" -eq 0 ] && _valid "$d0" && ! grep -q '^qemu_patch=' "$d0/.lhpc-qemu-built"; then
+	pass "no downstream patch: valid publication, marker lists no patch"
+else bad "no downstream patch: build failed (rc $rc)"; tail -n 5 "$work/out.log" >&2; fi
 
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "FAILURES" >&2; fi
 exit "$fail"

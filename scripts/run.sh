@@ -18,7 +18,7 @@ RUN="$ROOT/.run"; mkdir -p "$RUN"
 
 # Soft pin: the official Espressif QEMU build this overlay is verified against.
 # This is documentation + a warning, NOT a hard requirement (no pinning by install).
-KNOWN_GOOD_QEMU="esp_develop_9.0.0_20240606"
+KNOWN_GOOD_QEMU="QEMU emulator version 9.2.2"
 
 QEMU_OVERRIDE=""
 ENV_NAME="qemu-headless"   # opt-in: --env qemu-headless-extradio for the external-radio target
@@ -59,7 +59,7 @@ if printf '%s' "$QEMU_VER" | grep -q "$KNOWN_GOOD_QEMU"; then
 else
 	echo "[run] WARN: installed QEMU is: $QEMU_VER" >&2
 	echo "[run] WARN: verified build is $KNOWN_GOOD_QEMU — proceeding anyway (forward-compatible)." >&2
-	echo "[run] WARN: for the exact tested build: python \$IDF_PATH/tools/idf_tools.py install qemu-xtensa@$KNOWN_GOOD_QEMU" >&2
+	echo "[run] WARN: for the exact tested build: scripts/build-qemu.sh (esp-develop-9.2.2-20260417 + patches/qemu)" >&2
 fi
 [ -f "$FLASH" ] || { echo "ERROR: $FLASH not found. Run scripts/build.sh first." >&2; exit 1; }
 # libslirp is REQUIRED for the QEMU user-net (open_eth). Prefer the ldconfig cache, but fall back to a

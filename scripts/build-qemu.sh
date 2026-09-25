@@ -12,7 +12,8 @@
 # it on the FINAL STRIPPED binary before the install is ever marked valid.
 #
 # Layout produced: <dest>/qemu/bin/qemu-system-xtensa (matches run.sh's PATH/-qemu default). Completion
-# marker: <dest>/.lhpc-qemu-built (schema + source commit + config hash + final-binary hash). This marker
+# marker: <dest>/.lhpc-qemu-built (schema + source commit + config hash + final-binary hash; the config
+# hash covers the name and sha256 of every downstream patch in patches/qemu/). This marker
 # is DISTINCT from fetch-qemu.sh's .lhpc-qemu-verified, and this script recomputes the hashes, so a
 # FETCHED install can never be mistaken for a source-built one (and vice-versa).
 #
@@ -26,8 +27,8 @@
 set -eu
 
 # ---- pinned source (immutable) ----------------------------------------------------------------------
-QEMU_TAG="esp-develop-9.0.0-20240606"
-QEMU_COMMIT="abb5ce24386972e048b401f9eca10e90b8427a20"   # peeled commit of refs/tags/$QEMU_TAG
+QEMU_TAG="esp-develop-9.2.2-20260417"
+QEMU_COMMIT="40edccac415693c5130f91c01d84176ae6008566"   # peeled commit of refs/tags/$QEMU_TAG
 QEMU_REMOTE="https://github.com/espressif/qemu.git"
 TARGET_LIST="xtensa-softmmu"
 EXPECT_MACHINE="esp32"
@@ -40,7 +41,7 @@ EXPECT_NIC="open_eth"
 # QEMU crypto) — proven live. Instead we keep QEMU's normal auto-detected feature set and EXPLICITLY
 # disable only the display + audio back-ends; the link gate on the final stripped binary is the
 # authoritative proof that no SDL/X11/Wayland/Mesa/GL/PulseAudio/ALSA library linked. slirp + pixman are
-# --enabled (fail-loud) because the emulator + meshcom's user-net require them. QEMU 9.0 fetches a few
+# --enabled (fail-loud) because the emulator + meshcom's user-net require them. QEMU fetches a few
 # pinned meson subprojects (keycodemapdb + berkeley softfloat/testfloat) by git from QEMU's own mirror
 # at in-tree-pinned revisions — controlled + reproducible, NOT the PyPI danger. The genuine danger (QEMU
 # bootstrapping meson from PyPI when the SYSTEM meson is too old) is refused up front by the system-meson
@@ -75,8 +76,9 @@ CONFIGURE_FEATURE_ARGS=(
 	# missing libgcrypt a HARD configure failure instead of a silently-broken emulator.
 	"--enable-gcrypt"
 )
-# QEMU 9.0 needs meson >= 1.1.0; a system meson at least this new keeps mkvenv OFFLINE (no PyPI meson).
-MIN_MESON="1.1.0"
+# QEMU 9.2 needs meson >= 1.5.0 (pythondeps.toml); a system meson at least this new keeps mkvenv OFFLINE
+# (no PyPI meson). Debian Trixie ships a new enough one.
+MIN_MESON="1.5.0"
 
 BIN_REL="qemu/bin/qemu-system-xtensa"
 MARKER_REL=".lhpc-qemu-built"
@@ -99,6 +101,14 @@ HERE="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib-publish.sh
 . "$HERE/lib-publish.sh"
 
+# ---- downstream patches (TEMPORARY) -----------------------------------------------------------------
+# Applied in name order right after the exact upstream clone; a patch that does not apply cleanly is a
+# hard failure. Each patch's name + sha256 is part of the config contract, so changing, adding or
+# removing a patch forces a rebuild. Why they exist and when to drop them: patches/qemu/README.md.
+QEMU_PATCH_DIR="$HERE/../patches/qemu"
+QEMU_PATCHES=()
+for _p in "$QEMU_PATCH_DIR"/*.patch; do [ -f "$_p" ] && QEMU_PATCHES+=("$_p"); done
+
 # ---- prerequisites ----------------------------------------------------------------------------------
 PUB_TAG="$TAG"                         # so pub_need's messages are attributed correctly
 for c in git gcc python3 ninja meson pkg-config strip readelf sha256sum timeout flock mktemp; do
@@ -107,7 +117,7 @@ done
 # ldd is used by the link gate; prove it here too so the gate can never pass "silently".
 command -v ldd >/dev/null 2>&1 || { echo "ERROR: $TAG needs 'ldd' on PATH (link gate closure)" >&2; exit 3; }
 
-# System-meson version gate: QEMU 9.0 requires meson >= $MIN_MESON, AND a system meson at least this new
+# System-meson version gate: QEMU 9.2 requires meson >= $MIN_MESON, AND a system meson at least this new
 # is what keeps QEMU's mkvenv offline (no PyPI meson bootstrap — the real reproducibility danger). A
 # too-old system meson is a HARD failure here; the fix is a newer SYSTEM meson, never enabling a PyPI
 # install. (FAKE builds skip the compile, so the gate is only enforced for a real build.)
@@ -143,8 +153,12 @@ FAKE="${LHPC_QEMU_FAKE_BUILD:-}"
 # ---- canonical config contract + hash ---------------------------------------------------------------
 # Newline-delimited, path-free, order-stable. NO temp paths, detected deps, CPU/job count, or log text.
 config_contract() {
-	printf 'contract-schema=1\n'
+	printf 'contract-schema=2\n'
 	printf 'qemu_source_commit=%s\n' "$QEMU_COMMIT"
+	local _p
+	for _p in ${QEMU_PATCHES[@]+"${QEMU_PATCHES[@]}"}; do
+		printf 'qemu_patch=%s sha256=%s\n' "$(basename -- "$_p")" "$(sha256sum "$_p" | awk '{print $1}')"
+	done
 	printf 'target_list=%s\n' "$TARGET_LIST"
 	printf 'expected_machine=%s\n' "$EXPECT_MACHINE"
 	printf 'expected_nic=%s\n' "$EXPECT_NIC"
@@ -226,6 +240,11 @@ else
 		echo "ERROR: cloned HEAD $got_head != pinned $QEMU_COMMIT — refusing" >&2; exit 1
 	fi
 	echo "[$TAG] resolved QEMU HEAD: $got_head (matches pin)"
+	for _p in ${QEMU_PATCHES[@]+"${QEMU_PATCHES[@]}"}; do
+		git -C "$SRC" apply --check "$_p" || { echo "ERROR: patch does not apply to $QEMU_TAG: $_p" >&2; exit 1; }
+		git -C "$SRC" apply "$_p"
+		echo "[$TAG] applied downstream patch $(basename -- "$_p")"
+	done
 	# No submodule is initialized (by design), so none can be modified/conflicted. Log the recorded
 	# submodule pins for the record; a '+' (modified) or 'U' (conflicted) leaf — impossible on a fresh
 	# clone — would still be refused.
@@ -245,7 +264,7 @@ else
 
 	BUILD="$WORK/build"; mkdir -p "$BUILD"
 
-	# libgcrypt detection compat shim. QEMU 9.0's meson finds libgcrypt via the legacy `libgcrypt-config`
+	# libgcrypt detection compat shim. QEMU's meson (9.0 and 9.2) finds libgcrypt via the legacy `libgcrypt-config`
 	# tool, which Debian TRIXIE's libgcrypt20-dev no longer ships (libgcrypt 1.11 moved to pkg-config).
 	# On Bookworm the tool exists and this is a no-op; on Trixie we synthesize a shim that answers the
 	# `libgcrypt-config` interface from pkg-config, so `--enable-gcrypt` (REQUIRED for the esp32 machine)
@@ -393,6 +412,7 @@ MTMP="$DEST/.lhpc-qemu-built.tmp.$$"
 	printf 'source_commit=%s\n' "$QEMU_COMMIT"
 	printf 'config_sha256=%s\n' "$CONFIG_SHA"
 	printf 'binary_sha256=%s\n' "$BIN_SHA"
+	config_contract | grep '^qemu_patch=' || true   # no patch: nothing to list (set -e)
 } > "$MTMP"
 sync -f "$MTMP" 2>/dev/null || sync
 mv -- "$MTMP" "$DEST/$MARKER_REL"

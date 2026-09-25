@@ -70,13 +70,16 @@ Picking a MeshCom version also fixes the Arduino framework/ESP-IDF (via its
 `platformio.ini`); the OpenETH driver is auto-fetched to match.
 
 ## QEMU version
-QEMU is **never patched or installed by these scripts** — the official
-`qemu-system-xtensa` you already have is used as-is and *soft-pinned*: `run.sh`
-records the version and warns if it differs from the verified build, but still runs.
+Standalone, the `qemu-system-xtensa` you already have is used as-is and *soft-pinned*:
+`run.sh` records the version and warns if it differs from the verified build, but still runs.
 ```bash
 scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
-# exact tested build: idf_tools.py install qemu-xtensa@esp_develop_9.0.0_20240606
 ```
+`scripts/build-qemu.sh` (used by LoRaHAM Pi Control) builds a headless QEMU from Espressif's tag
+`esp-develop-9.2.2-20260417` **plus a temporary patch** in `patches/qemu/`: without it every flash
+write under QEMU rebuilds the memory map, which froze the node for about 55 s per settings save on a
+Pi Zero 2W. The patch is dropped once Espressif ships the change (see `patches/qemu/README.md`).
+Espressif's prebuilt QEMU (`idf_tools.py`, `scripts/fetch-qemu.sh`) does not contain it.
 
 ## Current limitations
 - No LoRa/RF, Wi-Fi, BLE, display, sensors, PMU, or battery hardware is emulated;
@@ -103,7 +106,7 @@ scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
 - PlatformIO:             6.1.19
 - Arduino framework:      framework-arduinoespressif32 3.20017.241212 (Arduino-ESP32 2.0.17)
 - Bundled ESP-IDF:        4.4.7
-- Espressif QEMU:         qemu-xtensa esp_develop_9.0.0_20240606 (QEMU 9.0.0), aarch64
+- Espressif QEMU:         esp-develop-9.2.2-20260417 + patches/qemu (QEMU 9.2.2, scripts/build-qemu.sh), aarch64
 - Host:                   Raspberry Pi (aarch64), Debian GNU/Linux 13 (trixie)
 ```
 Resolved tool versions are auto-detected at run time; this block records what

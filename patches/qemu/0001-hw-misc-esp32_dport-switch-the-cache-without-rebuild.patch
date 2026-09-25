@@ -1,0 +1,315 @@
+From 93a61de409d92366e6e553f5d8753b1f2286a7d2 Mon Sep 17 00:00:00 2001
+From: makrohard <410733@gmail.com>
+Date: Fri, 25 Sep 2026 20:01:46 +0200
+Subject: [PATCH] hw/misc/esp32_dport: switch the cache without rebuilding the
+ memory map
+
+ESP-IDF turns the flash cache off and on around every SPI flash
+operation. The DPORT model did that with memory_region_set_enabled() on
+the per-core DROM0, IRAM0 and, with PSRAM, DRAM1 regions, so each
+flash operation rebuilt the memory topology of every address space
+several times, and each re-enable also invalidated the translated code
+of the whole 4 MiB region. An NVS write costs hundreds of flash
+operations; an application that saves its settings stalls the emulated
+CPUs for seconds on a desktop host and close to a minute on a Raspberry
+Pi.
+
+Model each cache region as an IOMMU instead. It points either at the
+cache contents or at the existing illegal-access trap, so turning the
+cache on or off only changes a translation and flushes the owning CPU's
+TLB. Guest-visible behaviour is unchanged: with the cache off, an access
+still reads the trap value and raises the cache error interrupt, and
+ESP-IDF still reports "Cache disabled but cached memory region
+accessed".
+
+The two targets are mapped into each CPU address space above 4 GiB,
+where a 32-bit guest cannot reach them. They have to be in the CPU's own
+address space because TCG resolves an MMIO section found through an
+IOMMU against the CPU's address space, so a trap in a separate address
+space would resolve to the wrong section.
+
+The TLB flush runs on the CPU that owns the cache. The IOMMU notifier
+flushes the TLB of the calling thread, and with MTTCG the other core
+often writes the register.
+
+On re-enable, translated code is now invalidated only for the 64 KiB
+pages that are refilled.
+
+Signed-off-by: makrohard <410733@gmail.com>
+---
+ hw/misc/esp32_dport.c         | 124 +++++++++++++++++++++++++++++++---
+ hw/xtensa/esp32.c             |  12 ++--
+ include/hw/misc/esp32_dport.h |  19 +++++-
+ 3 files changed, 137 insertions(+), 18 deletions(-)
+
+diff --git a/hw/misc/esp32_dport.c b/hw/misc/esp32_dport.c
+index 1bb2435f48..5f58642772 100644
+--- a/hw/misc/esp32_dport.c
++++ b/hw/misc/esp32_dport.c
+@@ -18,6 +18,7 @@
+ #include "hw/qdev-properties-system.h"
+ #include "hw/registerfields.h"
+ #include "hw/boards.h"
++#include "hw/core/cpu.h"
+ #include "hw/misc/esp32_reg.h"
+ #include "hw/misc/esp32_dport.h"
+ 
+@@ -265,8 +266,10 @@ static void esp32_cache_data_sync(Esp32CacheRegionState* crs)
+             }
+         }
+         crs->mmu_table[i] &= ~ESP32_CACHE_MMU_ENTRY_CHANGED;
++        /* Only this page changed: drop the code translated from it */
++        memory_region_flush_rom_device(&crs->mem, i * ESP32_CACHE_PAGE_SIZE,
++                                       ESP32_CACHE_PAGE_SIZE);
+     }
+-    memory_region_flush_rom_device(&crs->mem, 0, ESP32_CACHE_REGION_SIZE);
+ }
+ 
+ static void esp32_cache_invalidate_all_entries(Esp32CacheRegionState* crs)
+@@ -276,28 +279,68 @@ static void esp32_cache_invalidate_all_entries(Esp32CacheRegionState* crs)
+     }
+ }
+ 
++static AddressSpace *esp32_cache_cpu_as(Esp32CacheRegionState *crs)
++{
++    return cpu_get_address_space(qemu_get_cpu(crs->cache->core_id), 0);
++}
++
++/*
++ * Runs on the CPU owning the cache: drops its TLB entries for the region.
++ * UNMAP only, no MAP: TCG is the only current consumer of this CPU-private
++ * IOMMU, and it re-translates lazily.
++ */
++static void esp32_cache_region_flush_tlb(CPUState *cpu, run_on_cpu_data data)
++{
++    Esp32CacheRegionState *crs = data.host_ptr;
++    IOMMUTLBEvent event = {
++        .type = IOMMU_NOTIFIER_UNMAP,
++        .entry = {
++            .target_as = esp32_cache_cpu_as(crs),
++            .addr_mask = ESP32_CACHE_REGION_SIZE - 1,
++            .perm = IOMMU_NONE,
++        },
++    };
++    memory_region_notify_iommu(&crs->iommu, 0, event);
++}
++
++/*
++ * Point a cache region at its contents or at the illegal-access trap.
++ * ESP-IDF turns the cache off and on around every SPI flash operation, so
++ * this must not change the memory topology: only the IOMMU's answer changes.
++ * The TLB flush is queued to the owning CPU, like the one QEMU queues after a
++ * topology change, because the other core may have written the register.
++ */
++static void esp32_cache_region_set_enabled(Esp32CacheRegionState *crs,
++                                           bool enabled)
++{
++    if (qatomic_read(&crs->enabled) == enabled) {
++        return;
++    }
++    if (enabled && crs->type != ESP32_DCACHE_PSRAM) {
++        esp32_cache_data_sync(crs);
++    }
++    /* Read by the owning CPU's thread in translate(), without the BQL */
++    qatomic_store_release(&crs->enabled, enabled);
++    async_run_on_cpu(qemu_get_cpu(crs->cache->core_id),
++                     esp32_cache_region_flush_tlb, RUN_ON_CPU_HOST_PTR(crs));
++}
++
+ static void esp32_cache_state_update(Esp32CacheState* cs)
+ {
+     bool cache_enabled = FIELD_EX32(cs->cache_ctrl_reg, DPORT_PRO_CACHE_CTRL, CACHE_ENA) != 0;
+ 
+     bool drom0_enabled = cache_enabled &&
+         FIELD_EX32(cs->cache_ctrl1_reg, DPORT_PRO_CACHE_CTRL1, MASK_DROM0) == 0;
+-    if (!cs->drom0.mem.enabled && drom0_enabled) {
+-        esp32_cache_data_sync(&cs->drom0);
+-    }
+-    memory_region_set_enabled(&cs->drom0.mem, drom0_enabled);
++    esp32_cache_region_set_enabled(&cs->drom0, drom0_enabled);
+ 
+     bool iram0_enabled = cache_enabled &&
+         FIELD_EX32(cs->cache_ctrl1_reg, DPORT_PRO_CACHE_CTRL1, MASK_IRAM0) == 0;
+-    if (!cs->iram0.mem.enabled && iram0_enabled) {
+-        esp32_cache_data_sync(&cs->iram0);
+-    }
+-    memory_region_set_enabled(&cs->iram0.mem, iram0_enabled);
++    esp32_cache_region_set_enabled(&cs->iram0, iram0_enabled);
+ 
+     if (cs->dport->has_psram) {
+         bool dram1_enabled = cache_enabled &&
+             FIELD_EX32(cs->cache_ctrl1_reg, DPORT_PRO_CACHE_CTRL1, MASK_DRAM1) == 0;
+-        memory_region_set_enabled(&cs->dram1.mem, dram1_enabled);
++        esp32_cache_region_set_enabled(&cs->dram1, dram1_enabled);
+     }
+ }
+ 
+@@ -412,6 +455,52 @@ static void esp32_cache_init_region(Esp32DportState *ds,
+     memory_region_init_io(&crs->illegal_access_trap_mem, OBJECT(cs->dport),
+                           &esp32_cache_ill_trap_ops, crs,
+                           desc, ESP32_CACHE_REGION_SIZE);
++
++    /* Like the MemoryRegion it replaces, a region starts out enabled */
++    crs->enabled = true;
++    snprintf(desc, sizeof(desc), "cpu%d-%s-iommu", cs->core_id, name);
++    memory_region_init_iommu(&crs->iommu, sizeof(crs->iommu),
++                             TYPE_ESP32_CACHE_IOMMU, OBJECT(cs->dport),
++                             desc, ESP32_CACHE_REGION_SIZE);
++}
++
++void esp32_dport_map_cache_region(Esp32CacheRegionState *crs,
++                                  MemoryRegion *cpu_mem)
++{
++    memory_region_add_subregion(cpu_mem, ESP32_CACHE_DATA_WINDOW + crs->base,
++                                &crs->mem);
++    memory_region_add_subregion(cpu_mem, ESP32_CACHE_TRAP_WINDOW + crs->base,
++                                &crs->illegal_access_trap_mem);
++    memory_region_add_subregion_overlap(cpu_mem, crs->base,
++                                        MEMORY_REGION(&crs->iommu), -1);
++}
++
++static IOMMUTLBEntry esp32_cache_iommu_translate(IOMMUMemoryRegion *iommu,
++                                                 hwaddr addr,
++                                                 IOMMUAccessFlags flag,
++                                                 int iommu_idx)
++{
++    Esp32CacheRegionState *crs =
++        container_of(iommu, Esp32CacheRegionState, iommu);
++    const hwaddr mask = ESP32_CACHE_PAGE_SIZE - 1;
++    const hwaddr window = qatomic_load_acquire(&crs->enabled)
++                          ? ESP32_CACHE_DATA_WINDOW
++                          : ESP32_CACHE_TRAP_WINDOW;
++
++    return (IOMMUTLBEntry) {
++        .target_as = esp32_cache_cpu_as(crs),
++        .iova = addr & ~mask,
++        .translated_addr = window + crs->base + (addr & ~mask),
++        .addr_mask = mask,
++        .perm = IOMMU_RW,
++    };
++}
++
++/* TCG calls this unconditionally; there is a single translation per region */
++static int esp32_cache_iommu_attrs_to_index(IOMMUMemoryRegion *iommu,
++                                            MemTxAttrs attrs)
++{
++    return 0;
+ }
+ 
+ static void esp32_dport_init(Object *obj)
+@@ -461,6 +550,20 @@ static void esp32_dport_class_init(ObjectClass *klass, void *data)
+     device_class_set_props(dc, esp32_dport_properties);
+ }
+ 
++static void esp32_cache_iommu_class_init(ObjectClass *klass, void *data)
++{
++    IOMMUMemoryRegionClass *imrc = IOMMU_MEMORY_REGION_CLASS(klass);
++
++    imrc->translate = esp32_cache_iommu_translate;
++    imrc->attrs_to_index = esp32_cache_iommu_attrs_to_index;
++}
++
++static const TypeInfo esp32_cache_iommu_info = {
++    .name = TYPE_ESP32_CACHE_IOMMU,
++    .parent = TYPE_IOMMU_MEMORY_REGION,
++    .class_init = esp32_cache_iommu_class_init,
++};
++
+ static const TypeInfo esp32_dport_info = {
+     .name = TYPE_ESP32_DPORT,
+     .parent = TYPE_SYS_BUS_DEVICE,
+@@ -471,6 +574,7 @@ static const TypeInfo esp32_dport_info = {
+ 
+ static void esp32_dport_register_types(void)
+ {
++    type_register_static(&esp32_cache_iommu_info);
+     type_register_static(&esp32_dport_info);
+ }
+ 
+diff --git a/hw/xtensa/esp32.c b/hw/xtensa/esp32.c
+index e0004700f1..0b0c33009d 100644
+--- a/hw/xtensa/esp32.c
++++ b/hw/xtensa/esp32.c
+@@ -354,19 +354,16 @@ static void esp32_soc_realize(DeviceState *dev, Error **errp)
+     if (s->dport.flash_blk) {
+         for (int i = 0; i < ESP32_CPU_COUNT; ++i) {
+             Esp32CacheRegionState *drom0 = &s->dport.cache_state[i].drom0;
+-            memory_region_add_subregion_overlap(&s->cpu_specific_mem[i], drom0->base, &drom0->illegal_access_trap_mem, -2);
+-            memory_region_add_subregion_overlap(&s->cpu_specific_mem[i], drom0->base, &drom0->mem, -1);
++            esp32_dport_map_cache_region(drom0, &s->cpu_specific_mem[i]);
+             Esp32CacheRegionState *iram0 = &s->dport.cache_state[i].iram0;
+-            memory_region_add_subregion_overlap(&s->cpu_specific_mem[i], iram0->base, &iram0->illegal_access_trap_mem, -2);
+-            memory_region_add_subregion_overlap(&s->cpu_specific_mem[i], iram0->base, &iram0->mem, -1);
++            esp32_dport_map_cache_region(iram0, &s->cpu_specific_mem[i]);
+         }
+         init_cache_err = true;
+     }
+     if (s->dport.has_psram) {
+         for (int i = 0; i < ESP32_CPU_COUNT; ++i) {
+             Esp32CacheRegionState *dram1 = &s->dport.cache_state[i].dram1;
+-            memory_region_add_subregion_overlap(&s->cpu_specific_mem[i], dram1->base, &dram1->illegal_access_trap_mem, -2);
+-            memory_region_add_subregion_overlap(&s->cpu_specific_mem[i], dram1->base, &dram1->mem, -1);
++            esp32_dport_map_cache_region(dram1, &s->cpu_specific_mem[i]);
+         }
+         init_cache_err = true;
+     }
+@@ -574,7 +571,8 @@ static void esp32_soc_init(Object *obj)
+         s->cpu[i].env.sregs[PRID] = cpuid[i];
+ 
+         snprintf(name, sizeof(name), "cpu%d-mem", i);
+-        memory_region_init(&s->cpu_specific_mem[i], NULL, name, UINT32_MAX);
++        memory_region_init(&s->cpu_specific_mem[i], NULL, name,
++                           ESP32_CPU_ADDRESS_SPACE_SIZE);
+ 
+         CPUState* cs = CPU(&s->cpu[i]);
+         cs->num_ases = 1;
+diff --git a/include/hw/misc/esp32_dport.h b/include/hw/misc/esp32_dport.h
+index 3dfc0ab4ce..fd8b6a4d65 100644
+--- a/include/hw/misc/esp32_dport.h
++++ b/include/hw/misc/esp32_dport.h
+@@ -10,6 +10,7 @@ typedef struct Esp32DportState Esp32DportState;
+ typedef struct Esp32CacheState Esp32CacheState;
+ 
+ #define TYPE_ESP32_DPORT "misc.esp32.dport"
++#define TYPE_ESP32_CACHE_IOMMU "misc.esp32.cache-iommu"
+ #define ESP32_DPORT(obj) OBJECT_CHECK(Esp32DportState, (obj), TYPE_ESP32_DPORT)
+ 
+ #define ESP32_CACHE_PAGE_SIZE           0x10000
+@@ -25,10 +26,24 @@ typedef enum Esp32CacheRegionType {
+     ESP32_DCACHE_PSRAM,
+ } Esp32CacheRegionType;
+ 
++/*
++ * Each CPU address space also holds, above the 4 GiB a 32-bit guest can reach,
++ * every cache region's contents and its illegal-access trap. The cache region
++ * itself is an IOMMU that points at one of the two, so turning the cache on or
++ * off never changes the memory topology. Both targets must live in the CPU's
++ * own address space: TCG resolves an MMIO section found through an IOMMU
++ * against the CPU's address space.
++ */
++#define ESP32_CACHE_DATA_WINDOW         0x100000000ULL
++#define ESP32_CACHE_TRAP_WINDOW         0x200000000ULL
++#define ESP32_CPU_ADDRESS_SPACE_SIZE    0x300000000ULL
++
+ typedef struct Esp32CacheRegionState {
+     Esp32CacheState* cache;
+-    MemoryRegion mem;
++    IOMMUMemoryRegion iommu;    /* mapped at the region's base address */
++    MemoryRegion mem;           /* contents: flash pages or the PSRAM alias */
+     MemoryRegion illegal_access_trap_mem;
++    bool enabled;
+     Esp32CacheRegionType type;
+     hwaddr base;
+     uint32_t illegal_access_retval;
+@@ -78,6 +93,8 @@ typedef struct Esp32DportState {
+ } Esp32DportState;
+ 
+ void esp32_dport_clear_ill_trap_state(Esp32DportState* s);
++void esp32_dport_map_cache_region(Esp32CacheRegionState *crs,
++                                  MemoryRegion *cpu_mem);
+ 
+ #define ESP32_DPORT_APPCPU_STALL_GPIO   "appcpu-stall"
+ #define ESP32_DPORT_APPCPU_RESET_GPIO   "appcpu-reset"
+-- 
+2.55.0
+
