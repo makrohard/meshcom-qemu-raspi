@@ -292,7 +292,7 @@ index a75d3e6a..3115bedd 100644
 +        static int s_prevUsable = -1;
 +        static double s_lat = 1e9, s_lon = 1e9;
 +        static int s_moves = 0;
-+        bool quality = (posinfo_hdop < 6.0) && (posinfo_satcount > 5);  // int hdop: mirrors firmware gate
++        bool quality = (fposinfo_hdop < 6.0) && (posinfo_satcount > 5);  // mirrors the firmware fix gate
 +        int usable = (gpsInitDone && gps.location.isValid() &&
 +                      gps.location.age() < 5000 && quality) ? 1 : 0;
 +        // Coordinate-free movement counter: count DISTINCT committed positions, proving
@@ -317,8 +317,8 @@ index a75d3e6a..3115bedd 100644
 +        }
 +        if(usable != s_prevUsable)
 +        {
-+            // NOTE: print fposinfo_hdop (float) for %.1f; posinfo_hdop is int and
-+            // passing it to %.1f would misalign the varargs and corrupt %s.
++            // NOTE: fposinfo_hdop is the firmware's float HDOP; it is passed as double
++            // for %.1f so the varargs line up (the old int posinfo_hdop no longer exists).
 +            Serial.printf("[GPSTEST] fix=%d sats=%u hdop=%.1f hasfix=%d src=%s\n",
 +                          usable, posinfo_satcount, (double)fposinfo_hdop,
 +                          WZ_GPS_HasFix() ? 1 : 0, cTimeSource);
