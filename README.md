@@ -5,9 +5,8 @@ on a Raspberry Pi, with OpenCores Ethernet (OpenETH) networking, so the existing
 MeshCom **web UI** and **net-console** are reachable from the host — no LoRa
 radio, Wi-Fi, BLE, GPS, display, or sensors required.
 
-By default it builds a **known-working, pinned stable release** of MeshCom (the
-version this overlay is verified against). The **latest `dev`** branch is also
-supported as an option. A small overlay adds a QEMU-only build profile and the
+By default it builds a **pinned MeshCom `dev` commit** (the version this overlay
+is verified against). The **latest `dev`** branch is also supported as an option. A small overlay adds a QEMU-only build profile and the
 QEMU support code. Opt-in profiles add **external-radio** and **GPS** support
 (sections below); the default headless target is unaffected.
 
@@ -30,7 +29,7 @@ If a prerequisite is missing, each script stops and prints the exact command to 
 ## Reproduce
 Run from this directory, in order:
 ```bash
-scripts/setup.sh            # fetch pinned stable MeshCom into .work/ (default)
+scripts/setup.sh            # fetch the pinned MeshCom into .work/ (default)
                             #   --dev for latest dev, or --ref <tag|branch|sha>
 scripts/apply-overlay.sh    # add the QEMU-headless overlay (checked patch)
 scripts/prepare-openeth.sh  # vendor the matching ESP-IDF OpenETH driver into .work/
@@ -60,10 +59,12 @@ scripts/clean.sh            # remove .work/ and .run/ (keeps overlay, scripts, R
 ```
 ## Choosing the MeshCom version
 ```bash
-scripts/setup.sh            # pinned known-working stable (default)
+scripts/setup.sh            # pinned, verified dev commit (default)
 scripts/setup.sh --dev      # latest upstream dev branch
 scripts/setup.sh --ref X    # any tag/branch/sha
 ```
+`--src <path|URL>` builds from another repository, e.g. a fork carrying unmerged
+changes (`--src https://github.com/makrohard/MeshCom-Firmware.git --ref lhpc-speed`).
 Change the pin via `DEFAULT_REF` in `scripts/setup.sh`. With `--dev`/newer refs the
 overlay patch may need maintenance — `apply-overlay.sh` fails clearly if so.
 Picking a MeshCom version also fixes the Arduino framework/ESP-IDF (via its

@@ -2,10 +2,10 @@
 #
 # setup.sh — fetch the MeshCom firmware source into the local workspace.
 #
-# By default it checks out a KNOWN-WORKING, PINNED stable release tag
+# By default it checks out a KNOWN-WORKING, PINNED MeshCom commit
 # (DEFAULT_REF below) — this is the version the overlay is verified against.
 # The pin is configurable:
-#   scripts/setup.sh                 # pinned stable (default, recommended)
+#   scripts/setup.sh                 # pinned (default, recommended)
 #   scripts/setup.sh --dev           # latest upstream dev branch (moving target)
 #   scripts/setup.sh --ref <tag|branch|sha>   # any specific revision
 # To change the default permanently, edit DEFAULT_REF.
@@ -22,7 +22,7 @@ RUN="$ROOT/.run"
 # Official upstream MeshCom firmware repository.
 UPSTREAM_URL="https://github.com/icssw-org/MeshCom-Firmware.git"
 
-# Known-working, pinned stable release the overlay is verified against.
+# Known-working, pinned commit the overlay is verified against.
 # (Configurable: edit this, or override per-run with --dev / --ref.)
 DEFAULT_REF="2a5dcdcdb05bc39467f9c1e37a4da8ef030ff84c"   # icssw-org dev 2a5dcdcd (v4.35t, 2026-09-25) — the overlay is verified against it
 REF="$DEFAULT_REF"
@@ -45,7 +45,7 @@ done
 if [ -n "$SRCURL" ]; then
 	echo "[setup] using firmware source: $SRCURL (ref $REF)"
 elif [ "$REF" = "$DEFAULT_REF" ]; then
-	echo "[setup] using pinned stable ref: $REF"
+	echo "[setup] using pinned ref: $REF"
 else
 	echo "[setup] using requested ref: $REF (not the pinned default $DEFAULT_REF)"
 fi
