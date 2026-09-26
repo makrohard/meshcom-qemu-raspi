@@ -26,7 +26,7 @@ UPSTREAM_URL="https://github.com/icssw-org/MeshCom-Firmware.git"
 # (Configurable: edit this, or override per-run with --dev / --ref.)
 DEFAULT_REF="2a5dcdcdb05bc39467f9c1e37a4da8ef030ff84c"   # icssw-org dev 2a5dcdcd (v4.35t, 2026-09-25) — the overlay is verified against it
 REF="$DEFAULT_REF"
-# Opt-in: clone the firmware from a LOCAL repository/path instead of upstream.
+# Opt-in: fetch the firmware from another repository (a local path or a fork URL) instead of upstream.
 # Used by the external-radio validation to run a local feature branch WITHOUT
 # modifying that source. Default (empty) keeps the normal upstream behavior.
 SRCURL=""
@@ -43,7 +43,7 @@ done
 
 # --src implies a non-default ref must usually be given (e.g. a feature branch).
 if [ -n "$SRCURL" ]; then
-	echo "[setup] using LOCAL firmware source: $SRCURL (ref $REF)"
+	echo "[setup] using firmware source: $SRCURL (ref $REF)"
 elif [ "$REF" = "$DEFAULT_REF" ]; then
 	echo "[setup] using pinned stable ref: $REF"
 else
@@ -57,11 +57,14 @@ need git "sudo apt-get install -y git"
 mkdir -p "$WORK" "$RUN"
 
 if [ -n "$SRCURL" ]; then
-	# Local source: clone read-only FROM the given repo (the source is never
-	# modified) and check out the requested ref into the workspace.
-	echo "[setup] cloning local source $SRCURL ($REF) -> $SRC (fresh)"
+	# Another source (a local repository or a fork): fetched read-only by ref into a fresh
+	# workspace, like upstream below, so a commit SHA works as well as a branch or tag.
+	echo "[setup] cloning $SRCURL ($REF) -> $SRC (fresh)"
 	rm -rf "$SRC"
-	git clone --branch "$REF" "$SRCURL" "$SRC"
+	git init -q "$SRC"
+	git -C "$SRC" remote add origin "$SRCURL"
+	git -C "$SRC" fetch --depth 1 origin "$REF"
+	git -C "$SRC" checkout -q FETCH_HEAD
 elif [ -d "$SRC/.git" ]; then
 	echo "[setup] workspace already present at $SRC; fetching latest"
 	git -C "$SRC" remote set-url origin "$UPSTREAM_URL"
