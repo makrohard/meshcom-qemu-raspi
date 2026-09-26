@@ -167,11 +167,11 @@ How it stays opt-in and out-of-tree:
   STRICT, event-backed OpenETH IP connectivity (`qemuNetworkReadyEvent()`): true
   after a genuine `IP_EVENT_ETH_GOT_IP`, cleared again on Ethernet loss, and never
   satisfied by the transparent SLIRP static fallback — never unconditionally.
-- In this env only, the firmware's Wi-Fi-specific 30s `checkWifiPing` watchdog is
-  compiled out (an `EXTERNAL_RADIO`-gated patch hunk). With no Wi-Fi present it would
-  otherwise see `WiFi.status() != WL_CONNECTED` forever and churn the web/network
-  lifecycle, tripping the XR readiness gate. The default `qemu-headless` target keeps
-  the original watchdog and the SLIRP fallback unchanged.
+- The firmware's Wi-Fi-specific 30s `checkWifiPing` watchdog is compiled out in every
+  `qemu-headless` target (a `QEMU_HEADLESS`-gated patch hunk). With no Wi-Fi present it
+  would otherwise see no Wi-Fi station forever and churn the web/network lifecycle,
+  close the shared UDP socket and trip the XR readiness gate. The default
+  `qemu-headless` target keeps the SLIRP fallback unchanged.
 - The bridge endpoint and HMAC password are supplied **locally at build time** via
   environment variables and are **never committed**:
   ```bash
@@ -188,7 +188,7 @@ The firmware obtains an OpenETH IP, connects to the bridge, authenticates (HMAC)
 and CONFIGUREs with its MeshCom radio profile; RX from a peer flows into native
 MeshCom ingress. Note: on SX127x boards the daemon accepts 2..17 dBm only, and the
 compiled default is what counts — a runtime `--txpower` is not re-synced into XR.
-The Wi-Fi-specific keepalive watchdog is suppressed in this env and XR
+The Wi-Fi-specific keepalive watchdog is suppressed in every QEMU target and XR
 readiness is event-backed, so the design prevents Wi-Fi-triggered web/network churn
 and the false XR PONG timeouts it caused. A live 30-minute idle-stability run is
 still required to confirm this and remains outstanding until it has actually passed.

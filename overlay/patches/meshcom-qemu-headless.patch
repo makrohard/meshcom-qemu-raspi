@@ -169,16 +169,16 @@ index 8bd68e2a..8fa362c0 100644
      }
      #endif
  
-+    #if defined(QEMU_HEADLESS) && defined(EXTERNAL_RADIO)
-+    // QEMU external-radio (M13b stabilization): there is no Wi-Fi in this environment.
-+    // The 30s checkWifiPing watchdog below would see WiFi.status() != WL_CONNECTED forever,
-+    // exhaust ifalseping, then Udp.stop()/WiFi.disconnect(), clear node_hasIPaddress and
-+    // stopWebserver()+startNetwork() -- churning the network lifecycle and dropping the
-+    // external-radio transport's readiness gate (false PONG-timeout / needless reconnect).
-+    // OpenETH readiness here is event-backed (externalRadioNetworkReady -> qemuNetworkReadyEvent)
-+    // and the XR transport keeps its own connectivity/error handling, so this Wi-Fi-specific
-+    // watchdog is suppressed ONLY in this environment. Default qemu-headless and all real
-+    // boards keep the original block (the #else branch below) unchanged.
++    #if defined(QEMU_HEADLESS)
++    // QEMU (every qemu-headless profile, M13b stabilization): there is no Wi-Fi here.
++    // The 30s checkWifiPing watchdog below would see no Wi-Fi station forever, then
++    // Udp.stop()/WiFi.disconnect(), clear node_hasIPaddress and
++    // stopWebserver()+startNetwork() -- churning the network lifecycle, closing the shared
++    // UDP socket and (with the external radio) dropping the transport's readiness gate.
++    // OpenETH readiness here is event-backed (qemuNetworkReady/qemuNetworkReadyEvent) and the
++    // XR transport keeps its own connectivity/error handling, so this Wi-Fi-specific
++    // watchdog is suppressed in every QEMU build. All real boards keep the original block
++    // (the #else branch below) unchanged.
 +    #else
      // check WiFI connected with Ping every 30 sec
      if(meshcom_settings.node_netmode == 0 && (uint32_t)(millis() - wifi_active_timer) >= 30000)
@@ -210,7 +210,7 @@ diff --git a/src/gps_functions.cpp b/src/gps_functions.cpp
 index a75d3e6a..3115bedd 100644
 --- a/src/gps_functions.cpp
 +++ b/src/gps_functions.cpp
-@@ -894,6 +894,52 @@ void WZ_GPS_Init()
+@@ -894,6 +894,54 @@ void WZ_GPS_Init()
    if(gpsInitDone)
        return;
  
@@ -243,7 +243,9 @@ index a75d3e6a..3115bedd 100644
 +    int qchars = 0;
 +    while((millis() - qstart) < (uint32_t)WAIT_DURATION)
 +    {
-+      while(GPSSerial.available())
++      // Bounded like the outer loop: a host feed faster than the emulated CPU drains it
++      // must not keep this inner loop, and so the boot, from ever returning (R22).
++      while(GPSSerial.available() && qchars <= 10 && (millis() - qstart) < (uint32_t)WAIT_DURATION)
 +      {
 +        char qc = char(GPSSerial.read());
 +        if((qc >= 'A' && qc <= 'Z') || (qc >= '0' && qc <= '9') ||
@@ -263,7 +265,7 @@ index a75d3e6a..3115bedd 100644
    WZ_GPS_Reset();
  
    gpsInitDone = true;
-@@ -951,6 +997,7 @@ void WZ_GPS_Init()
+@@ -951,6 +999,7 @@ void WZ_GPS_Init()
      Serial.println("[GPS_ERR] Erkennung fehlgeschlagen (Timeout oder kein Signal)");
      gpsDetected = false;
    }
@@ -271,7 +273,7 @@ index a75d3e6a..3115bedd 100644
  }
  
  
-@@ -971,11 +1018,70 @@ void WZ_GPS_Feed()
+@@ -971,11 +1020,70 @@ void WZ_GPS_Feed()
          return;
  
      // Alle verfuegbaren Bytes lesen (non-blocking)
@@ -382,18 +384,37 @@ index 9f5a4bbc..ca91a269 100644
  #include <udp_functions.h>
  #include <extudp_functions.h>
  #include <kiss_functions.h>
-@@ -1108,8 +1110,39 @@ void wifiDnsPoll()
+@@ -1108,8 +1110,58 @@ void wifiDnsPoll()
    }
  }
  
 +#ifdef QEMU_HEADLESS
 +// QEMU-only: copy the OpenETH IPv4 state into meshcom_settings (mirrors what the
 +// Wi-Fi/Ethernet path does), using the event-driven readiness from qemu_network.
++// The shared UDP socket is (re)opened whenever the IP state is (re)established, as
++// startMeshComUDP() does on Wi-Fi (the QEMU path skips that function). Every path that
++// stops the socket also clears hasIPaddress, so !hasIPaddress means "no valid socket".
++// Without one, ntpHarvestUDP() polls a closed descriptor on every loop pass and the core
++// logs an EBADF line each time, which stalls the emulated loop for seconds. The IP state
++// is reported up only once the socket is open; a failed open is retried by the loop.
 +static bool qemuApplyNetState()
 +{
 +  IPAddress ip, gw, mask;
 +  if(!qemuNetworkReady() || !qemuNetworkGetIp(ip, gw, mask))
 +    return false;
++  if(!hasIPaddress)
++  {
++    static bool s_udpFailLogged = false;
++    if(!Udp.begin(LOCAL_PORT))
++    {
++      if(!s_udpFailLogged)
++        printfdeb("[QEMU]...UDP port %d open FAILED, retrying\n", LOCAL_PORT);
++      s_udpFailLogged = true;
++      return false;   // IP state stays down; the loop calls this again
++    }
++    s_udpFailLogged = false;
++    printfdeb("[QEMU]...UDP port %d open\n", LOCAL_PORT);
++  }
 +  snprintf(meshcom_settings.node_ip, sizeof(meshcom_settings.node_ip), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
 +  snprintf(meshcom_settings.node_gw, sizeof(meshcom_settings.node_gw), "%u.%u.%u.%u", gw[0], gw[1], gw[2], gw[3]);
 +  snprintf(meshcom_settings.node_subnet, sizeof(meshcom_settings.node_subnet), "%u.%u.%u.%u", mask[0], mask[1], mask[2], mask[3]);
@@ -422,7 +443,7 @@ index 9f5a4bbc..ca91a269 100644
    #if defined(HAS_ETHERNET)
  
        if(meshcom_settings.node_netmode == 1)
-@@ -1279,6 +1312,17 @@ bool wifiHarvestGotIp()
+@@ -1279,6 +1331,17 @@ bool wifiHarvestGotIp()
  
  bool doWiFiConnect()
  {

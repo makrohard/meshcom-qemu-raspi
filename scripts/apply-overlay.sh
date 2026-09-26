@@ -38,10 +38,14 @@ if git apply --reverse --check "$PATCH" >/dev/null 2>&1; then
 	echo "[overlay] patch already applied; nothing to do."
 	exit 0
 fi
-if ! git apply --check "$PATCH" 2>/tmp/overlay_apply_err; then
+# The check's error text goes to a private per-run file, not a fixed /tmp path that two
+# concurrent runs (or another user) would share.
+ERRF="$(mktemp)"
+trap 'rm -f "$ERRF"' EXIT
+if ! git apply --check "$PATCH" 2>"$ERRF"; then
 	echo "ERROR: patch does not apply to this upstream revision." >&2
 	echo "       Upstream may have drifted; the overlay patch needs maintenance." >&2
-	sed 's/^/       | /' /tmp/overlay_apply_err >&2 || true
+	sed 's/^/       | /' "$ERRF" >&2 || true
 	exit 4
 fi
 git apply "$PATCH"
