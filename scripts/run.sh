@@ -10,6 +10,10 @@
 # version, record it, and warn if it differs from the verified build, but still run
 # (forward-compatible). Override the binary with `--qemu <path>` if needed.
 # The exact PID and UART log are written under .run/. Foreground; stop.sh stops it.
+# QEMU runs on a NODE IMAGE, not on the build output: the node writes its settings (NVS) into the image
+# it runs on, and a rebuild or update replaces the build output. scripts/node-image.sh prepares the node
+# image from the build before every start and carries the settings into a new build
+# (--node-image <path>; default .state/node-flash.bin in this repo).
 set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,10 +26,12 @@ KNOWN_GOOD_QEMU="QEMU emulator version 9.2.2"
 
 QEMU_OVERRIDE=""
 ENV_NAME="qemu-headless"   # opt-in: --env qemu-headless-extradio for the external-radio target
+NODE_IMAGE="$ROOT/.state/node-flash.bin"
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--qemu) QEMU_OVERRIDE="${2:?--qemu needs a path}"; shift 2 ;;
 		--env) ENV_NAME="${2:?--env needs a value}"; shift 2 ;;
+		--node-image) NODE_IMAGE="${2:?--node-image needs a path}"; shift 2 ;;
 		*) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
@@ -62,6 +68,13 @@ else
 	echo "[run] WARN: for the exact tested build: scripts/build-qemu.sh (esp-develop-9.2.2-20260417 + patches/qemu)" >&2
 fi
 [ -f "$FLASH" ] || { echo "ERROR: $FLASH not found. Run scripts/build.sh first." >&2; exit 1; }
+# One guest per node image: node-image.sh must never rewrite the image under a running QEMU. The lock is
+# held on fd 9 for QEMU's whole life (QEMU inherits the descriptor) and is released by the kernel when it
+# exits, so a crash leaves nothing stale behind.
+mkdir -p "$(dirname "$NODE_IMAGE")"
+exec 9>"$NODE_IMAGE.lock"
+flock -n 9 || { echo "ERROR: a QEMU guest already runs on $NODE_IMAGE; stop it first (scripts/stop.sh)." >&2; exit 1; }
+"$ROOT/scripts/node-image.sh" "$FLASH" "$NODE_IMAGE"
 # libslirp is REQUIRED for the QEMU user-net (open_eth). Prefer the ldconfig cache, but fall back to a
 # direct file check: a service manager may run this with a minimal PATH that omits /usr/sbin (where
 # ldconfig lives), and an off-PATH ldconfig must NOT be read as "library missing" (live finding — it
@@ -82,7 +95,7 @@ QEMU_CMD=(
 	-nographic
 	-machine esp32
 	-m 4M
-	-drive "file=$FLASH,if=mtd,format=raw"
+	-drive "file=$NODE_IMAGE,if=mtd,format=raw"
 	-nic "user,model=open_eth,hostfwd=tcp:127.0.0.1:18083-:80,hostfwd=tcp:127.0.0.1:12323-:2323"
 	-global driver=timer.esp32.timg,property=wdt_disable,value=true
 )

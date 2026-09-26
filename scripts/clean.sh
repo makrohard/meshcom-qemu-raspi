@@ -4,7 +4,8 @@
 #
 # Removes the workspace (.work/, incl. the cloned MeshCom tree, .pio build output,
 # and the generated lib/openeth_compat) and runtime data (.run/). Never touches
-# overlay/, scripts/, README.md, or .gitignore.
+# overlay/, scripts/, README.md, or .gitignore, and keeps .state/: the node image with the
+# node's settings (run.sh). Delete .state/ by hand to start the node from scratch.
 set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

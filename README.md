@@ -75,6 +75,7 @@ Standalone, the `qemu-system-xtensa` you already have is used as-is and *soft-pi
 `run.sh` records the version and warns if it differs from the verified build, but still runs.
 ```bash
 scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
+scripts/run.sh --node-image /path/node-flash.bin    # where the node's image (and settings) live; default .state/
 ```
 `scripts/build-qemu.sh` (used by LoRaHAM Pi Control) builds a headless QEMU from Espressif's tag
 `esp-develop-9.2.2-20260417` **plus a temporary patch** in `patches/qemu/`: without it every flash

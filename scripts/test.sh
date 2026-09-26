@@ -62,7 +62,10 @@ else
 	ENV_NAME="$(basename "$(dirname "$FLASH")")"
 	prev_uart="$(readlink "$UART" 2>/dev/null || echo "")"
 	echo "[test] no running guest — booting $ENV_NAME for a self-contained test"
-	"$ROOT/scripts/run.sh" --env "$ENV_NAME" ${QEMU_FWD[@]+"${QEMU_FWD[@]}"} > "$RUN/test-boot.log" 2>&1 &
+	# A fresh throwaway node image: a test never boots, or writes into, the operator's node image.
+	TEST_NODE="$RUN/test-node-flash.bin"
+	rm -f "$TEST_NODE" "$TEST_NODE".*
+	"$ROOT/scripts/run.sh" --env "$ENV_NAME" --node-image "$TEST_NODE" ${QEMU_FWD[@]+"${QEMU_FWD[@]}"} > "$RUN/test-boot.log" 2>&1 &
 	trap '"$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true' EXIT
 	self_booted=1
 	# Wait until run.sh has BOTH recorded the pid AND repointed uart-latest.log to a NEW file.

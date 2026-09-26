@@ -137,8 +137,10 @@ nc 127.0.0.1 12323          # or: socat - TCP:127.0.0.1:12323
 --pos                       # show position; --info shows the current config
 ```
 
-Settings are stored in flash (NVS) and **survive restarts**; only an explicit
-`scripts/build.sh` (which writes a fresh image) resets them to defaults.
+Settings are stored in flash (NVS) and **survive restarts and rebuilds**: `run.sh` runs QEMU on a node
+image (`.state/node-flash.bin`, or `--node-image <path>`), not on the build output, and carries the node's
+NVS into a new build when its partition table is unchanged (`scripts/node-image.sh`). A build with a
+different partition table starts from defaults, and says so. Delete the node image to reset the node.
 
 > The web UI's **Save** does not round-trip under QEMU: the value usually *is* applied
 > and saved server-side, but the page can't show it (the HTTP response is lost under
