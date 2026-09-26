@@ -256,5 +256,12 @@ if [ "$rc" -eq 0 ] && _valid "$d0" && ! grep -q '^qemu_patch=' "$d0/.lhpc-qemu-b
 	pass "no downstream patch: valid publication, marker lists no patch"
 else bad "no downstream patch: build failed (rc $rc)"; tail -n 5 "$work/out.log" >&2; fi
 
+# the source note ships with the install: tag, commit and every patch with its sha256
+src_note="$work/pub/x/qemu/share/doc/qemu/SOURCE"
+if grep -q "tag esp-develop-" "$src_note" 2>/dev/null && grep -q "(commit $COMMIT)" "$src_note" \
+		&& grep -q '0001-.*sha256=[0-9a-f]\{64\}' "$src_note"; then
+	pass "install ships a SOURCE note naming the tag, commit and patch"
+else bad "SOURCE note missing or incomplete"; fi
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "FAILURES" >&2; fi
 exit "$fail"

@@ -325,7 +325,20 @@ SHIM
 	echo "[$TAG] install (DESTDIR staging with FINAL prefix $PREFIX)"
 	( cd "$BUILD" && DESTDIR="$STAGEROOT" ninja install ) >/dev/null 2>&1 || {
 		echo "ERROR: staged install failed" >&2; exit 1; }
+	# QEMU is GPL-2.0: ship its licence texts with the binary (the binary artifact packs this tree)
+	mkdir -p "$STAGED/qemu/share/doc/qemu"
+	cp "$SRC/COPYING" "$SRC/COPYING.LIB" "$SRC/LICENSE" "$STAGED/qemu/share/doc/qemu/" || {
+		echo "ERROR: QEMU licence files missing in the source" >&2; exit 1; }
 fi
+
+# Where the source of this binary is (the GPL source offer): the pinned tag plus the patches.
+mkdir -p "$STAGED/qemu/share/doc/qemu"
+{
+	printf 'qemu-system-xtensa is licensed GPL-2.0 (see COPYING). Its source:\n'
+	printf '  %s tag %s (commit %s)\n' "$QEMU_REMOTE" "$QEMU_TAG" "$QEMU_COMMIT"
+	printf '  plus these patches from https://github.com/makrohard/meshcom-qemu-raspi (patches/qemu/):\n'
+	config_contract | sed -n 's/^qemu_patch=/    /p'
+} > "$STAGED/qemu/share/doc/qemu/SOURCE"
 
 # ---- verify + strip the STAGED install --------------------------------------------------------------
 [ -f "$STAGED_BIN" ] && [ ! -L "$STAGED_BIN" ] || { echo "ERROR: staged binary missing/symlink: $STAGED_BIN" >&2; exit 1; }
