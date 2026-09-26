@@ -101,7 +101,7 @@ Espressif's prebuilt QEMU (`idf_tools.py`, `scripts/fetch-qemu.sh`) does not con
 
 ## Tested with
 ```
-- MeshCom (default pin):  dev 80b85a5 = v4.35t.09.20  (sha 80b85a5a2f36e26970ea02fea0d6e09ed68c1d61) — kept equal to the lhpc manifest pin; lhpc passes it as `--ref`
+- MeshCom (default pin):  dev 2a5dcdcd = v4.35t, 2026-09-25  (sha 2a5dcdcdb05bc39467f9c1e37a4da8ef030ff84c) — the overlay is verified against it; lhpc passes its own pin as `--ref` (and `--src` for a fork)
 - Also verified against:  upstream/dev  (latest, via --dev)
 - PlatformIO:             6.1.19
 - Arduino framework:      framework-arduinoespressif32 3.20017.241212 (Arduino-ESP32 2.0.17)
