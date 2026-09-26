@@ -79,8 +79,12 @@ scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
 `scripts/build-qemu.sh` (used by LoRaHAM Pi Control) builds a headless QEMU from Espressif's tag
 `esp-develop-9.2.2-20260417` **plus a temporary patch** in `patches/qemu/`: without it every flash
 write under QEMU rebuilds the memory map, which froze the node for about 55 s per settings save on a
-Pi Zero 2W. The patch is dropped once Espressif ships the change (see `patches/qemu/README.md`).
-Espressif's prebuilt QEMU (`idf_tools.py`, `scripts/fetch-qemu.sh`) does not contain it.
+Pi Zero 2W. It is submitted upstream as espressif/qemu#183 and is removed once an Espressif release
+tag contains it: issue #1 here tracks that, and the weekly `qemu-patch-exit-check` workflow comments
+there when it happens (it runs from `main`; GitHub pauses it after 60 days without commits); the
+steps are in `patches/qemu/README.md`. The build installs QEMU's licence
+texts and a `SOURCE` note (tag, commit, patch sha256) in `qemu/share/doc/qemu/`.
+Espressif's prebuilt QEMU (`idf_tools.py`, `scripts/fetch-qemu.sh`) does not contain the patch.
 
 ## Current limitations
 - No LoRa/RF, Wi-Fi, BLE, display, sensors, PMU, or battery hardware is emulated;
