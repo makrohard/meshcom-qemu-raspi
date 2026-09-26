@@ -344,6 +344,19 @@ index a75d3e6a..3115bedd 100644
      {
          #if defined(USE_HELTEC_T114) or defined(BOARD_T_ECHO)
          int ic = Serial1.read();
+diff --git a/src/loop_functions.cpp b/src/loop_functions.cpp
+index 83c67d1b..69556f95 100644
+--- a/src/loop_functions.cpp
++++ b/src/loop_functions.cpp
+@@ -66,7 +66,7 @@ bool gpsInitDone = false;
+ // gps (TinyGPSPlus) wird in gps_functions.cpp unbedingt instanziiert und hier nur fuer
+ // reine Distanz-/Kursberechnungen (distanceBetween/courseTo) genutzt - kein GPS-Modul noetig.
+ // Daher auch fuer Wireless Paper (ohne ENABLE_GPS) sichtbar machen.
+-#if defined(ENABLE_GPS) || defined(ENABLE_RAK_GPS) || defined(WP_DISP)
++#if defined(QEMU_HEADLESS) || defined(ENABLE_GPS) || defined(ENABLE_RAK_GPS) || defined(WP_DISP)   // QEMU: gps is used unconditionally below
+ extern TinyGPSPlus gps;
+ #endif
+ 
 diff --git a/src/net_console.cpp b/src/net_console.cpp
 index 65b68228..2897dd58 100644
 --- a/src/net_console.cpp
