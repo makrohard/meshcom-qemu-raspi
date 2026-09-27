@@ -5,8 +5,8 @@ on a Raspberry Pi, with OpenCores Ethernet (OpenETH) networking, so the existing
 MeshCom **web UI** and **net-console** are reachable from the host — no LoRa
 radio, Wi-Fi, BLE, GPS, display, or sensors required.
 
-By default it builds a **pinned MeshCom `dev` commit** (the version this overlay
-is verified against). The **latest `dev`** branch is also supported as an option. A small overlay adds a QEMU-only build profile and the
+By default it builds a **pinned MeshCom `dev` commit** (the overlay patch applies
+to it). The moving **`dev`** branch can be selected with `--dev`; newer upstream revisions may need an overlay refresh. A small overlay adds a QEMU-only build profile and the
 QEMU support code. Opt-in profiles add **external-radio** and **GPS** support
 (sections below); the default headless target is unaffected.
 
@@ -30,7 +30,7 @@ If a prerequisite is missing, each script stops and prints the exact command to 
 Run from this directory, in order:
 ```bash
 scripts/setup.sh            # fetch the pinned MeshCom into .work/ (default)
-                            #   --dev for latest dev, or --ref <tag|branch|sha>
+                            #   --dev for the moving dev branch, or --ref <tag|branch|sha>
 scripts/apply-overlay.sh    # add the QEMU-headless overlay (checked patch)
 scripts/prepare-openeth.sh  # vendor the matching ESP-IDF OpenETH driver into .work/
 scripts/build.sh            # build the qemu-headless firmware + merge a flash image
@@ -60,7 +60,7 @@ scripts/clean.sh            # remove .work/ and .run/ (keeps overlay, scripts, R
 ## Choosing the MeshCom version
 ```bash
 scripts/setup.sh            # pinned, verified dev commit (default)
-scripts/setup.sh --dev      # latest upstream dev branch
+scripts/setup.sh --dev      # the moving upstream dev branch
 scripts/setup.sh --ref X    # any tag/branch/sha
 ```
 `--src <path|URL>` builds from another repository, e.g. a fork carrying unmerged
@@ -107,13 +107,13 @@ Espressif's prebuilt QEMU (`idf_tools.py`, `scripts/fetch-qemu.sh`) does not con
 
 ## Tested with
 ```
-- MeshCom (default pin):  dev 2a5dcdcd = v4.35t, 2026-09-25  (sha 2a5dcdcdb05bc39467f9c1e37a4da8ef030ff84c) — the overlay is verified against it; lhpc passes its own pin as `--ref` (and `--src` for a fork)
-- Also verified against:  upstream/dev  (latest, via --dev)
+- MeshCom (default pin):  icssw-org dev 6e62fb2c (2026-09-27, with PR #1165/#1166): the overlay patch applies; lhpc passes its own pin as `--ref` (and `--src` for a fork)
+- M21 validation snapshot: lhpc-speed ba289816 merged with dev 6e62fb2c: all four QEMU profiles build; runtime exercised on qemu-headless-extradio-gpsd (x86_64 Linux host)
 - PlatformIO:             6.1.19
 - Arduino framework:      framework-arduinoespressif32 3.20017.241212 (Arduino-ESP32 2.0.17)
 - Bundled ESP-IDF:        4.4.7
-- Espressif QEMU:         esp-develop-9.2.2-20260417 + patches/qemu (QEMU 9.2.2, scripts/build-qemu.sh), aarch64
-- Host:                   Raspberry Pi (aarch64), Debian GNU/Linux 13 (trixie)
+- Espressif QEMU:         esp-develop-9.2.2-20260417 + patches/qemu (QEMU 9.2.2, scripts/build-qemu.sh)
+- Previously verified:    Raspberry Pi (aarch64), Debian GNU/Linux 13 (trixie), with the earlier pin; not rerun for this upstream refresh
 ```
 Resolved tool versions are auto-detected at run time; this block records what
 passed, not a hard requirement.

@@ -64,6 +64,11 @@
 
 #define BUTTON_PIN 12
 
+// Upstream's opt-outs for boards without a battery divider / a usable BLE controller (icssw-org dev,
+// PR #1166): QEMU emulates neither, so the firmware skips battery measurement and the whole NimBLE stack.
+#define DISABLE_BATTERY
+#define DISABLE_BLE
+
 // NOTE: intentionally NOT defined for the headless QEMU profile:
 //   ENABLE_GPS, ENABLE_BMX280, ENABLE_BMP390, ENABLE_AHT20, ENABLE_SHT21,
 //   ENABLE_BMX680, ENABLE_MCP23017, ENABLE_INA226, ENABLE_MC811, ENABLE_RTC,

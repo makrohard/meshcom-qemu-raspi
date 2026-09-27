@@ -1,21 +1,3 @@
-diff --git a/src/batt_function_old.cpp b/src/batt_function_old.cpp
-index b14a86dd..f7a19245 100644
---- a/src/batt_function_old.cpp
-+++ b/src/batt_function_old.cpp
-@@ -500,6 +500,13 @@ float read_batt(void)
- {
- 	//printlndeb("read_batt");
- 
-+#ifdef QEMU_HEADLESS
-+	// QEMU has no analog/ADC peripheral: adc1_get_raw() busy-waits forever for a
-+	// conversion-done bit QEMU never sets, which would hang the main loop.
-+	// Return a fixed plausible battery voltage (mV) instead.
-+	return 4100.0f;
-+#endif
-+
- 	float raw = 0.0;
- 
- 	#if defined(NRF52_SERIES) && not defined(BOARD_HELTEC_T114) && not defined(BOARD_T_ECHO)
 diff --git a/src/configuration_global.h b/src/configuration_global.h
 index f1a9e296..a42709f7 100644
 --- a/src/configuration_global.h
@@ -26,7 +8,7 @@ index f1a9e296..a42709f7 100644
  #define SOURCE_VERSION_SUB "t"
  #define SOURCE_VERSION_WEB_SUB "t"
 diff --git a/src/esp32/esp32_main.cpp b/src/esp32/esp32_main.cpp
-index 8bd68e2a..8fa362c0 100644
+index feb8caab..7e105034 100644
 --- a/src/esp32/esp32_main.cpp
 +++ b/src/esp32/esp32_main.cpp
 @@ -1023,7 +1023,30 @@ void esp32setup()
@@ -61,18 +43,7 @@ index 8bd68e2a..8fa362c0 100644
      if(bBMPON)
      {
          bBMEON=false;
-@@ -1057,8 +1080,10 @@ void esp32setup()
- 
-     // Initialize battery reading
-     #if not defined (BOARD_T_DECK_PRO)
-+    #ifndef QEMU_HEADLESS
- 	init_batt();
-     #endif
-+    #endif
- 
-     #ifdef VEXT_CTRL
-         pinMode(VEXT_CTRL, OUTPUT);
-@@ -1178,8 +1203,10 @@ void esp32setup()
+@@ -1180,8 +1203,10 @@ void esp32setup()
      #else
  
          #if !defined(BOARD_T_DECK_PRO) && !defined(BOARD_T5_EPAPER)
@@ -83,7 +54,7 @@ index 8bd68e2a..8fa362c0 100644
  
      #endif
  
-@@ -1242,7 +1269,9 @@ void esp32setup()
+@@ -1244,7 +1269,9 @@ void esp32setup()
      }
      #endif
  
@@ -93,7 +64,7 @@ index 8bd68e2a..8fa362c0 100644
  
      printfdeb("[INIT].._GW_ID: %08X\n", _GW_ID);
  
-@@ -1283,7 +1312,9 @@ void esp32setup()
+@@ -1285,7 +1312,9 @@ void esp32setup()
      #elif defined(HAS_TFT)
          initTFT();
      #else
@@ -103,7 +74,7 @@ index 8bd68e2a..8fa362c0 100644
      #endif
  
      #if defined(BOARD_HELTEC_V3) || defined(BOARD_STICK_V3)
-@@ -1300,7 +1331,9 @@ void esp32setup()
+@@ -1302,7 +1331,9 @@ void esp32setup()
          String  version = cvers;
          displayTFT("MeshCom 4.0", version, "@BY ICSSW.ORG", "OE1KBC, OE1KFR",  "...starting now", 5000);
      #else
@@ -113,7 +84,7 @@ index 8bd68e2a..8fa362c0 100644
      #endif
  
      //LORA CHIP present
-@@ -1409,6 +1442,13 @@ void esp32setup()
+@@ -1411,6 +1442,13 @@ void esp32setup()
          int state = radio.begin(433.175);
          radio.setDio2AsRfSwitch(true);
          radio.setTCXO(1.8);
@@ -127,45 +98,16 @@ index 8bd68e2a..8fa362c0 100644
          #else
          int state = radio.begin(433.175);
          #endif
-@@ -1775,6 +1815,7 @@ void esp32setup()
- 
-     bleQueue = xQueueCreate(5, sizeof(BleQueueItem));
- 
-+#ifndef QEMU_HEADLESS
-     NimBLEDevice::init(strBLEName);
- 
-     printfdeb("[BLE ]...Device-Address <%s>\n", NimBLEDevice::toString().c_str());
-@@ -1864,7 +1905,10 @@ void esp32setup()
+@@ -1867,7 +1905,7 @@ void esp32setup()
      #else
      pAdvertising->start();
      #endif
 - 
-+#else
-+    printlndeb("[QEMU]...BLE/NimBLE disabled (no backend in QEMU); BLE init skipped");
-+#endif
 +
      printfdeb("[BLE ]...Waiting a client connection to notify...\n");
-     
-     // reset GPS-Time parameter
-@@ -1944,11 +1988,17 @@ void esp32setup()
- // BLE TX Function -> Node to Client
- void esp32_write_ble(uint8_t confBuff[300], uint8_t conf_len)
- {
-+#ifdef QEMU_HEADLESS
-+    // No BLE backend in QEMU; characteristic was never created.
-+    (void)confBuff; (void)conf_len;
-+    return;
-+#else
-     if(bBLEDEBUG)
-         printfdeb("[LOOP] <%lu> WRITE BLE\n", millis());
- 
-     pTxCharacteristic->setValue(confBuff, conf_len);
-     pTxCharacteristic->notify();
-+#endif
- }
- 
- 
-@@ -2967,6 +3017,17 @@ void esp32loop()
+     #else
+     printfdeb("[BLE ]...disabled (DISABLE_BLE)\n");
+@@ -2977,6 +3015,17 @@ void esp32loop()
      }
      #endif
  
@@ -183,7 +125,7 @@ index 8bd68e2a..8fa362c0 100644
      // check WiFI connected with Ping every 30 sec
      if(meshcom_settings.node_netmode == 0 && (uint32_t)(millis() - wifi_active_timer) >= 30000)
      {
-@@ -2997,6 +3058,7 @@ void esp32loop()
+@@ -3007,6 +3056,7 @@ void esp32loop()
              wifi_active_timer = millis();
          }
      }
@@ -191,7 +133,7 @@ index 8bd68e2a..8fa362c0 100644
  
      // SOFTSER
      #if defined(ENABLE_SOFTSER)
-@@ -3562,7 +3624,13 @@ void esp32loop()
+@@ -3572,7 +3622,13 @@ void esp32loop()
          {
              rebootAuto = 0;
  
@@ -207,7 +149,7 @@ index 8bd68e2a..8fa362c0 100644
              #endif
          }
 diff --git a/src/gps_functions.cpp b/src/gps_functions.cpp
-index a75d3e6a..3115bedd 100644
+index 3bb05432..a0e1a321 100644
 --- a/src/gps_functions.cpp
 +++ b/src/gps_functions.cpp
 @@ -894,6 +894,54 @@ void WZ_GPS_Init()
@@ -345,7 +287,7 @@ index a75d3e6a..3115bedd 100644
          #if defined(USE_HELTEC_T114) or defined(BOARD_T_ECHO)
          int ic = Serial1.read();
 diff --git a/src/loop_functions.cpp b/src/loop_functions.cpp
-index 83c67d1b..69556f95 100644
+index d6303522..59793688 100644
 --- a/src/loop_functions.cpp
 +++ b/src/loop_functions.cpp
 @@ -66,7 +66,7 @@ bool gpsInitDone = false;
@@ -358,7 +300,7 @@ index 83c67d1b..69556f95 100644
  #endif
  
 diff --git a/src/net_console.cpp b/src/net_console.cpp
-index 65b68228..2897dd58 100644
+index e4758e43..6bc1f356 100644
 --- a/src/net_console.cpp
 +++ b/src/net_console.cpp
 @@ -25,6 +25,7 @@
@@ -369,23 +311,19 @@ index 65b68228..2897dd58 100644
  #include <netinet/in.h>
  #include <freertos/FreeRTOS.h>
  #include <freertos/semphr.h>
-@@ -345,8 +346,14 @@ void loopNetConsole()
-     // und damit einen Panic/Reboot. Daher hier frueh aussteigen, solange kein WiFi verbunden
-     // ist. s_server_pending bleibt erhalten, sodass der Listening-Socket geoeffnet wird, sobald
-     // die WiFi-Verbindung steht. (Ohne IP kann die Netconsole ohnehin nicht arbeiten.)
+@@ -356,6 +357,10 @@ void loopNetConsole()
+     networkReady = networkReady ||
+                    (meshcom_settings.node_netmode == 1 && meshcom_settings.node_hasIPaddress);
+     #endif
 +    #ifdef QEMU_HEADLESS
-+    // QEMU headless: the lwIP/TCP stack is ready once OpenETH has an IPv4 address.
-+    if (!qemuNetworkReady())
-+        return;
-+    #else
-     if (WiFi.status() != WL_CONNECTED)
-         return;
++    // QEMU headless: neither WiFi nor HAS_ETHERNET; the lwIP/TCP stack is ready once OpenETH has an IPv4 address.
++    networkReady = networkReady || qemuNetworkReady();
 +    #endif
  
-     // Open listening socket on first call (triggered by startNetConsole)
-     if (s_server_pending)
+     if (!networkReady)
+         return;
 diff --git a/src/udp_functions.cpp b/src/udp_functions.cpp
-index 9f5a4bbc..ca91a269 100644
+index 8634f113..f1e00ee5 100644
 --- a/src/udp_functions.cpp
 +++ b/src/udp_functions.cpp
 @@ -4,6 +4,8 @@
@@ -397,7 +335,7 @@ index 9f5a4bbc..ca91a269 100644
  #include <udp_functions.h>
  #include <extudp_functions.h>
  #include <kiss_functions.h>
-@@ -1108,8 +1110,58 @@ void wifiDnsPoll()
+@@ -1114,8 +1116,58 @@ void wifiDnsPoll()
    }
  }
  
@@ -456,7 +394,7 @@ index 9f5a4bbc..ca91a269 100644
    #if defined(HAS_ETHERNET)
  
        if(meshcom_settings.node_netmode == 1)
-@@ -1279,6 +1331,17 @@ bool wifiHarvestGotIp()
+@@ -1285,6 +1337,17 @@ bool wifiHarvestGotIp()
  
  bool doWiFiConnect()
  {
@@ -475,7 +413,7 @@ index 9f5a4bbc..ca91a269 100644
    {
      int n = WiFi.scanComplete();
 diff --git a/src/web_functions/web_functions.cpp b/src/web_functions/web_functions.cpp
-index 22bbfd76..91bd71ce 100644
+index 0b60381e..33b61321 100644
 --- a/src/web_functions/web_functions.cpp
 +++ b/src/web_functions/web_functions.cpp
 @@ -4,6 +4,8 @@
@@ -526,7 +464,7 @@ index 22bbfd76..91bd71ce 100644
  
      web_server.begin();
  
-@@ -1999,6 +2011,15 @@ void sub_page_spectrum()
+@@ -2002,6 +2014,15 @@ void sub_page_spectrum()
  {
      _create_meshcom_subheader("Spectrum Scan");
      web_client.println("<div id=\"content_inner\">");

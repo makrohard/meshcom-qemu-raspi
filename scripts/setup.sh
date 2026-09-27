@@ -3,7 +3,7 @@
 # setup.sh — fetch the MeshCom firmware source into the local workspace.
 #
 # By default it checks out a KNOWN-WORKING, PINNED MeshCom commit
-# (DEFAULT_REF below) — this is the version the overlay is verified against.
+# (DEFAULT_REF below) — the overlay patch applies to it.
 # The pin is configurable:
 #   scripts/setup.sh                 # pinned (default, recommended)
 #   scripts/setup.sh --dev           # latest upstream dev branch (moving target)
@@ -22,9 +22,9 @@ RUN="$ROOT/.run"
 # Official upstream MeshCom firmware repository.
 UPSTREAM_URL="https://github.com/icssw-org/MeshCom-Firmware.git"
 
-# Known-working, pinned commit the overlay is verified against.
+# Pinned commit; the overlay patch applies to it.
 # (Configurable: edit this, or override per-run with --dev / --ref.)
-DEFAULT_REF="2a5dcdcdb05bc39467f9c1e37a4da8ef030ff84c"   # icssw-org dev 2a5dcdcd (v4.35t, 2026-09-25) — the overlay is verified against it
+DEFAULT_REF="6e62fb2ce244890b62ae7026bd68f24a3f9391b8"   # icssw-org dev 6e62fb2c (2026-09-27, with PR #1165/#1166) — the overlay patch applies to it
 REF="$DEFAULT_REF"
 # Opt-in: fetch the firmware from another repository (a local path or a fork URL) instead of upstream.
 # Used by the external-radio validation to run a local feature branch WITHOUT
