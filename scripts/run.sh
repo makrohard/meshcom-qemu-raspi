@@ -14,6 +14,8 @@
 # it runs on, and a rebuild or update replaces the build output. scripts/node-image.sh prepares the node
 # image from the build before every start and carries the settings into a new build
 # (--node-image <path>; default .state/node-flash.bin in this repo).
+# The node's MAC, and with it MeshCom's node ID, comes from an efuse image that belongs to the node image
+# (<node image>.efuse), created once by scripts/node-efuse.sh.
 set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,6 +38,7 @@ while [ $# -gt 0 ]; do
 	esac
 done
 FLASH="$SRC/.pio/build/$ENV_NAME/flash.bin"
+NODE_EFUSE="$NODE_IMAGE.efuse"
 
 # GPS profiles (…-gpsd) get a dedicated host-backed virtual UART1 carrying incoming
 # NMEA. Everything else is byte-for-byte unchanged.
@@ -75,6 +78,7 @@ mkdir -p "$(dirname "$NODE_IMAGE")"
 exec 9>"$NODE_IMAGE.lock"
 flock -n 9 || { echo "ERROR: a QEMU guest already runs on $NODE_IMAGE; stop it first (scripts/stop.sh)." >&2; exit 1; }
 "$ROOT/scripts/node-image.sh" "$FLASH" "$NODE_IMAGE"
+"$ROOT/scripts/node-efuse.sh" "$NODE_EFUSE"
 # libslirp is REQUIRED for the QEMU user-net (open_eth). Prefer the ldconfig cache, but fall back to a
 # direct file check: a service manager may run this with a minimal PATH that omits /usr/sbin (where
 # ldconfig lives), and an off-PATH ldconfig must NOT be read as "library missing" (live finding — it
@@ -96,6 +100,8 @@ QEMU_CMD=(
 	-machine esp32
 	-m 4M
 	-drive "file=$NODE_IMAGE,if=mtd,format=raw"
+	-drive "file=$NODE_EFUSE,if=none,format=raw,id=efuse"
+	-global driver=nvram.esp32.efuse,property=drive,value=efuse
 	-nic "user,model=open_eth,hostfwd=tcp:127.0.0.1:18083-:80,hostfwd=tcp:127.0.0.1:12323-:2323"
 	-global driver=timer.esp32.timg,property=wdt_disable,value=true
 )

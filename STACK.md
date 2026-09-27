@@ -140,7 +140,8 @@ nc 127.0.0.1 12323          # or: socat - TCP:127.0.0.1:12323
 Settings are stored in flash (NVS) and **survive restarts and rebuilds**: `run.sh` runs QEMU on a node
 image (`.state/node-flash.bin`, or `--node-image <path>`), not on the build output, and carries the node's
 NVS into a new build when its partition table is unchanged (`scripts/node-image.sh`). A build with a
-different partition table starts from defaults, and says so. Delete the node image to reset the node.
+different partition table starts from defaults, and says so. The node's MAC, and with it its MeshCom node ID, is
+`<node image>.efuse` (created once, `scripts/node-efuse.sh`). Delete both to reset the node.
 
 > The web UI's **Save** does not round-trip under QEMU: the value usually *is* applied
 > and saved server-side, but the page can't show it (the HTTP response is lost under
@@ -157,9 +158,9 @@ different partition table starts from defaults, and says so. Delete the node ima
 - **TX power is 17 dBm** (`overlay/variants/qemu-headless/configuration.h`): since daemon
   1.0.0 the accepted range on SX127x boards is **2..17 dBm** (17 is the PA_BOOST maximum;
   below 2 the chip drives RFO, not the antenna pin), and a CONFIGURE outside it is rejected
-  outright — a firmware built at the old 20 cannot configure the radio at all. The firmware
-  snapshots power once at XR connect, so a runtime `--txpower` is not re-synced into XR;
-  the compiled default is what matters. SX1262 boards (Waveshare) still accept 0..20.
+  outright — a firmware built at the old 20 cannot configure the radio at all. The node's
+  stored TX power is sent at XR connect and re-synced after a runtime `--txpower` change.
+  SX1262 boards (Waveshare) still accept 0..20.
 - **gpsd stays loopback-only**; the relay only reads `127.0.0.1:2947` or a fixture and
   never touches `/dev/ttyACM0`. Fixtures are synthetic; never commit real coordinates.
 - **Spectrum scan is not available under QEMU** — it sweeps RSSI off a local SX126x chip

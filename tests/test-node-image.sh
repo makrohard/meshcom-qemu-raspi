@@ -91,7 +91,7 @@ check "a missing sidecar carries the node's NVS" '[ "$(region "$N" 9 5)" = "$NVS
 
 echo "== run.sh boots the node image, not the build output"
 R="$T/repo"; mkdir -p "$R/scripts" "$R/.work/MeshCom-Firmware/.pio/build/qemu-headless"
-cp "$REPO/scripts/run.sh" "$REPO/scripts/node-image.sh" "$R/scripts/"
+cp "$REPO/scripts/run.sh" "$REPO/scripts/node-image.sh" "$REPO/scripts/node-efuse.sh" "$R/scripts/"
 image "$R/.work/MeshCom-Firmware/.pio/build/qemu-headless/flash.bin" 'A' 'P'
 cat > "$T/qemu-stub" <<'EOF'
 #!/usr/bin/env bash

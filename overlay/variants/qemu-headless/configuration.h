@@ -49,10 +49,9 @@
 // accepts 2..17 dBm on SX127x boards and rejects a CONFIGURE outside it — 17 is the
 // PA_BOOST maximum, and below 2 the chip drives RFO instead, which is not the pin the
 // antenna is on. (Until daemon 1.0.0 the range was 0..20 and this was 20; a firmware
-// built at 20 cannot configure an SX127x daemon at all.) The firmware snapshots power
-// once at XR connect, so a runtime --txpower is NOT re-synced into XR — the working
-// value must be the compiled default. Irrelevant to non-XR QEMU profiles (radio is
-// disabled there).
+// built at 20 cannot configure an SX127x daemon at all.) The node's power (--txpower,
+// stored in NVS; this value by default) goes to the bridge at every XR connect and on a
+// change. Irrelevant to non-XR QEMU profiles (radio is disabled there).
 #define TX_POWER_MAX 17
 #define TX_POWER_MIN 2
 #define TX_OUTPUT_POWER 17

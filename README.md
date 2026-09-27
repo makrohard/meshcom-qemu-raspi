@@ -75,7 +75,7 @@ Standalone, the `qemu-system-xtensa` you already have is used as-is and *soft-pi
 `run.sh` records the version and warns if it differs from the verified build, but still runs.
 ```bash
 scripts/run.sh --qemu /path/to/qemu-system-xtensa   # override the binary
-scripts/run.sh --node-image /path/node-flash.bin    # where the node's image (and settings) live; default .state/
+scripts/run.sh --node-image /path/node-flash.bin    # the node's image (settings) and <image>.efuse (MAC = MeshCom node ID); default .state/
 ```
 `scripts/build-qemu.sh` (used by LoRaHAM Pi Control) builds a headless QEMU from Espressif's tag
 `esp-develop-9.2.2-20260417` **plus a temporary patch** in `patches/qemu/`: without it every flash
@@ -186,8 +186,8 @@ Native validation workflow (high level): start the LoRaHAM daemon (433) and the
 bridge (`--backend loraham`, loopback, `--password-file`), then boot this target.
 The firmware obtains an OpenETH IP, connects to the bridge, authenticates (HMAC),
 and CONFIGUREs with its MeshCom radio profile; RX from a peer flows into native
-MeshCom ingress. Note: on SX127x boards the daemon accepts 2..17 dBm only, and the
-compiled default is what counts — a runtime `--txpower` is not re-synced into XR.
+MeshCom ingress. Note: on SX127x boards the daemon accepts 2..17 dBm only; the node's
+stored TX power is sent at XR connect and re-synced after a runtime `--txpower` change.
 The Wi-Fi-specific keepalive watchdog is suppressed in every QEMU target and XR
 readiness is event-backed, so the design prevents Wi-Fi-triggered web/network churn
 and the false XR PONG timeouts it caused. A live 30-minute idle-stability run is
