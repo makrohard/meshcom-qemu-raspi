@@ -12,6 +12,7 @@ QEMU support code. Opt-in profiles add **external-radio** and **GPS** support
 
 ## Upstream references
 - MeshCom Firmware: https://github.com/icssw-org/MeshCom-Firmware
+- Firmware line: upstream icssw-org `dev` again (since the overlay at b99e6ee3; the earlier pins used the fork branch `lhpc-speed`)
 - Espressif QEMU (ESP-IDF docs): https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/tools/qemu.html
 - PlatformIO: https://platformio.org/
 
