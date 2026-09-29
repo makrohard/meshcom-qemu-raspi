@@ -64,7 +64,7 @@ scripts/setup.sh --dev      # the moving upstream dev branch
 scripts/setup.sh --ref X    # any tag/branch/sha
 ```
 `--src <path|URL>` builds from another repository, e.g. a fork carrying unmerged
-changes (`--src https://github.com/makrohard/MeshCom-Firmware.git --ref lhpc-speed`).
+changes (`--src <the fork's URL> --ref <its branch or commit>`).
 Change the pin via `DEFAULT_REF` in `scripts/setup.sh`. With `--dev`/newer refs the
 overlay patch may need maintenance — `apply-overlay.sh` fails clearly if so.
 Picking a MeshCom version also fixes the Arduino framework/ESP-IDF (via its
@@ -107,7 +107,7 @@ Espressif's prebuilt QEMU (`idf_tools.py`, `scripts/fetch-qemu.sh`) does not con
 
 ## Tested with
 ```
-- MeshCom (default pin):  icssw-org dev 6e62fb2c (2026-09-27, with PR #1165/#1166): the overlay patch applies; lhpc passes its own pin as `--ref` (and `--src` for a fork)
+- MeshCom (default pin):  icssw-org dev ad36784f (2026-09-28, with PR #1164/#1165/#1166): the overlay patch and its `#pragma once` step apply (checked 2026-09-29); lhpc passes its own pin as `--ref` and `--src`
 - M21 validation snapshot: lhpc-speed ba289816 merged with dev 6e62fb2c: all four QEMU profiles build; runtime exercised on qemu-headless-extradio-gpsd (x86_64 Linux host)
 - PlatformIO:             6.1.19
 - Arduino framework:      framework-arduinoespressif32 3.20017.241212 (Arduino-ESP32 2.0.17)

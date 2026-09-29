@@ -1,12 +1,3 @@
-diff --git a/src/configuration_global.h b/src/configuration_global.h
-index f1a9e296..a42709f7 100644
---- a/src/configuration_global.h
-+++ b/src/configuration_global.h
-@@ -1,3 +1,4 @@
-+#pragma once
- #define SOURCE_VERSION "4.35"
- #define SOURCE_VERSION_SUB "t"
- #define SOURCE_VERSION_WEB_SUB "t"
 diff --git a/src/esp32/esp32_main.cpp b/src/esp32/esp32_main.cpp
 index feb8caab..7e105034 100644
 --- a/src/esp32/esp32_main.cpp
