@@ -317,15 +317,13 @@ diff --git a/src/udp_functions.cpp b/src/udp_functions.cpp
 index 8634f113..f1e00ee5 100644
 --- a/src/udp_functions.cpp
 +++ b/src/udp_functions.cpp
-@@ -4,6 +4,8 @@
-  */
+@@ -5,4 +5,6 @@
  #include <Arduino.h>
  
 +#include "qemu/qemu_network.h"   // QEMU_HEADLESS only (self-guarded)
 +
  #include <udp_functions.h>
  #include <extudp_functions.h>
- #include <kiss_functions.h>
 @@ -1114,8 +1116,58 @@ void wifiDnsPoll()
    }
  }
@@ -407,15 +405,13 @@ diff --git a/src/web_functions/web_functions.cpp b/src/web_functions/web_functio
 index 0b60381e..33b61321 100644
 --- a/src/web_functions/web_functions.cpp
 +++ b/src/web_functions/web_functions.cpp
-@@ -4,6 +4,8 @@
-  */
+@@ -5,4 +5,6 @@
  #include <Arduino.h>
  
 +#include "qemu/qemu_network.h"   // QEMU_HEADLESS only (self-guarded)
 +
  #include <configuration.h>
  #include <debugconf.h>
- #include "web_functions.h"
 @@ -114,20 +116,29 @@ void startWebserver()
      bool ethernet_mode = false;
      #endif
