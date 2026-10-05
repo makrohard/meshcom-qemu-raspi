@@ -69,6 +69,14 @@
 #define DISABLE_BATTERY
 #define DISABLE_BLE
 
+// Upstream's neighbour matrix (src/nbr_matrix.h, since v4.40a) requires this value; upstream
+// variants get it from src/configuration_default.h, included last. This variant states the one
+// value instead: that file switches the fleet's sensor flags on (and older revisions lack it).
+// The value is the fleet default, calibrated for this variant's SF11 / BW 250 / CR 4/6.
+#ifndef LORA_SNR_STABLE_MIN_DB
+#define LORA_SNR_STABLE_MIN_DB (-16)
+#endif
+
 // NOTE: intentionally NOT defined for the headless QEMU profile:
 //   ENABLE_GPS, ENABLE_BMX280, ENABLE_BMP390, ENABLE_AHT20, ENABLE_SHT21,
 //   ENABLE_BMX680, ENABLE_MCP23017, ENABLE_INA226, ENABLE_MC811, ENABLE_RTC,
