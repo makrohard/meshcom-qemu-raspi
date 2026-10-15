@@ -66,14 +66,17 @@ else
 	TEST_NODE="$RUN/test-node-flash.bin"
 	rm -f "$TEST_NODE" "$TEST_NODE".*
 	"$ROOT/scripts/run.sh" --env "$ENV_NAME" --node-image "$TEST_NODE" ${QEMU_FWD[@]+"${QEMU_FWD[@]}"} > "$RUN/test-boot.log" 2>&1 &
+	RUNPID=$!
 	trap '"$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true' EXIT
 	self_booted=1
-	# Wait until run.sh has BOTH recorded the pid AND repointed uart-latest.log to a NEW file.
-	for _ in $(seq 1 60); do
+	# Wait until run.sh has provisioned the fresh node and repointed uart-latest.log to the first
+	# supervised boot's NEW file (within its provisioning budget); a run.sh that ends first is a failure.
+	for _ in $(seq 1 "${PROVISION_TIMEOUT:-900}"); do
 		cur="$(readlink "$UART" 2>/dev/null || echo "")"
 		if [ -n "$cur" ] && [ "$cur" != "$prev_uart" ] && [ -f "$PIDFILE" ]; then
 			BOOT_LOG="$RUN/$cur"; break
 		fi
+		kill -0 "$RUNPID" 2>/dev/null || { echo "[test] FAIL: run.sh ended before the first boot (see $RUN/test-boot.log)"; exit 1; }
 		sleep 1
 	done
 	[ -n "$BOOT_LOG" ] || { echo "[test] FAIL: guest did not start (no fresh UART log / pid recorded)"; exit 1; }
@@ -125,7 +128,8 @@ PY
 # No-radio scan of UART (informational).
 if [ -f "$UART" ]; then
 	echo "[test] no-radio scan:"
-	echo "  radio disabled marker : $(grep -c 'radio disabled' "$UART" || true)"
+	echo "  address reported      : $(grep -c 'ethmode: IP .* reported' "$UART" || true)  (expect 1)"
+	echo "  W5500 path ([ETH])    : $(grep -c '\[ETH\]' "$UART" || true)  (expect 0 at boot)"
 	echo "  RadioLib RX success    : $(grep -c 'Starting to listen ... success' "$UART" || true)  (expect 0)"
 	echo "  NimBLE init            : $(grep -ci 'NimBLEDevice::init' "$UART" || true)  (expect 0)"
 	echo "  external_radio refs    : $(grep -ci 'external_radio\|extradio' "$UART" || true)  (0 on default builds; >0 on extradio)"

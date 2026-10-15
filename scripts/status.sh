@@ -15,6 +15,7 @@ if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
 else
 	echo "qemu   : not running"
 fi
+[ -f "$RUN/restarts" ] && echo "resets : $(cut -d' ' -f1 "$RUN/restarts") guest restart(s), last at $(cut -d' ' -f2 "$RUN/restarts")" || true
 UART="$RUN/uart-latest.log"
 if [ -f "$UART" ]; then
 	echo "net    : $(grep -oE 'GOT_IP ip=[0-9.]+' "$UART" | tail -1 || echo 'no IP yet')"
@@ -24,3 +25,4 @@ if command -v curl >/dev/null 2>&1; then
 	code="$(curl -s --max-time 4 -o /dev/null -w '%{http_code}' http://127.0.0.1:18083/ 2>/dev/null || echo 000)"
 	echo "http   : GET http://127.0.0.1:18083/ -> $code"
 fi
+exit 0

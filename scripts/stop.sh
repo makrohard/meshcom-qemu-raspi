@@ -1,25 +1,41 @@
 #!/usr/bin/env bash
 #
-# stop.sh — stop ONLY the QEMU instance started by run.sh (exact recorded PID).
+# stop.sh — stop the runner (scripts/run.sh) and its QEMU guest.
+#
+# A PID file is trusted only for a process that still is what it names: run.pid only if that process
+# holds this checkout's .run/run.lock open, qemu.pid only if that process is qemu-system-xtensa using a
+# node image of this runner. A stale or reused PID is never signalled; its file is removed.
+# EXIT CODE: 0, also when nothing runs.
 set -eu
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PIDFILE="$ROOT/.run/qemu.pid"
+RUN="$ROOT/.run"
 
-[ -f "$PIDFILE" ] || { echo "[stop] no $PIDFILE (nothing recorded to stop)."; exit 0; }
-PID="$(cat "$PIDFILE")"
-[ -n "$PID" ] || { echo "[stop] empty pid file."; exit 0; }
+is_runner() { [ -n "$1" ] && find "/proc/$1/fd" -maxdepth 1 -lname "$RUN/run.lock" 2>/dev/null | grep -q .; }
+is_qemu() { [ -n "$1" ] && { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null | grep -q 'qemu-system-xtensa .*-drive file=.*\.bin,if=mtd'; }
+# stop_pid PID: TERM, up to 15 s, then KILL.
+stop_pid() {
+	kill -TERM "$1" 2>/dev/null || true
+	for _ in $(seq 1 15); do kill -0 "$1" 2>/dev/null || return 0; sleep 1; done
+	echo "[stop] pid $1 still alive; SIGKILL"; kill -KILL "$1" 2>/dev/null || true
+}
 
-if ! kill -0 "$PID" 2>/dev/null; then
-	echo "[stop] pid $PID not running."
-	rm -f "$PIDFILE"; exit 0
+stopped=0
+RPID="$(cat "$RUN/run.pid" 2>/dev/null || true)"
+if is_runner "$RPID"; then
+	echo "[stop] SIGTERM to the runner, pid $RPID (it stops its QEMU)"
+	stop_pid "$RPID"; stopped=1
+elif [ -n "$RPID" ]; then
+	echo "[stop] run.pid $RPID is not this checkout's runner; not signalled"
 fi
+rm -f "$RUN/run.pid"
 
-echo "[stop] SIGTERM to qemu pid $PID"
-kill -TERM "$PID" 2>/dev/null || true
-for _ in $(seq 1 10); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
-if kill -0 "$PID" 2>/dev/null; then echo "[stop] still alive; SIGKILL"; kill -KILL "$PID" 2>/dev/null || true; fi
-rm -f "$PIDFILE"
-# QEMU removes its own server socket on a clean exit; remove any leftover after a kill.
-rm -f "$ROOT/.run/gps-uart1.sock"
-echo "[stop] stopped."
+QPID="$(cat "$RUN/qemu.pid" 2>/dev/null || true)"
+if is_qemu "$QPID"; then
+	echo "[stop] SIGTERM to qemu pid $QPID"
+	stop_pid "$QPID"; stopped=1
+elif [ -n "$QPID" ] && [ "$stopped" = 0 ]; then
+	echo "[stop] qemu.pid $QPID is not a running guest; not signalled"
+fi
+rm -f "$RUN/qemu.pid" "$RUN/gps-uart1.sock"
+[ "$stopped" = 1 ] && echo "[stop] stopped." || echo "[stop] nothing was running."
+exit 0

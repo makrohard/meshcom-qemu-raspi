@@ -26,6 +26,7 @@ umask 077   # the node image holds the node's settings, credentials included: ow
 BUILD="${1:?usage: node-image.sh BUILD NODE}"
 NODE="${2:?usage: node-image.sh BUILD NODE}"
 SIDE="$NODE.build-sha256"
+MARKER="$NODE.provisioned"   # run.sh's provisioning marker: only valid for an image with settings
 PREV="$NODE.prev"
 
 SECTOR=4096
@@ -51,6 +52,7 @@ block() { dd if="$1" bs="$SECTOR" skip="$2" count="$3" status=none; }
 BSHA="$(sha256sum -- "$BUILD" | cut -d' ' -f1)"
 
 if [ ! -f "$NODE" ]; then
+	rm -f -- "$MARKER"
 	install_file "$NODE" "$BUILD"
 	write_sidecar "$BSHA"
 	echo "[run] node image: created from the build ($NODE)"
@@ -72,6 +74,7 @@ if cmp -s <(block "$NODE" "$PT_BLOCK" 1) <(block "$BUILD" "$PT_BLOCK" 1); then
 	msg="new build, node settings carried over"
 else
 	msg="new build with a different partition table, node settings RESET"
+	rm -f -- "$MARKER"   # before the new image is published: a crash in between leaves no stale marker
 fi
 sync -- "$NEW"; mv -f -- "$NEW" "$NODE"; durable "$NODE"
 write_sidecar "$BSHA"
