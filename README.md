@@ -108,7 +108,7 @@ Espressif's prebuilt QEMU (`idf_tools.py`, `scripts/fetch-qemu.sh`) does not con
 
 ## Tested with
 ```
-- MeshCom (default pin):  icssw-org dev ad36784f (2026-09-28, with PR #1164/#1165/#1166): the overlay patch and its `#pragma once` step apply (checked 2026-09-29); lhpc passes its own pin as `--ref` and `--src`
+- MeshCom (default pin):  icssw-org dev 8770f9b5 (2026-10-12, v4.40a-58): the overlay patch and its `#pragma once` step apply and all four QEMU profiles build (checked 2026-10-15, x86_64 Linux host; not booted); the patch also applies to tag v4.40a.hbserver (f2b3a349, 2026-10-13); the patch no longer applies to v4.40a (e1e2acea), whose startWebserver() lacks the MTU line; lhpc passes its own pin as `--ref` and `--src`
 - M21 validation snapshot: lhpc-speed ba289816 merged with dev 6e62fb2c: all four QEMU profiles build; runtime exercised on qemu-headless-extradio-gpsd (x86_64 Linux host)
 - PlatformIO:             6.1.19
 - Arduino framework:      framework-arduinoespressif32 3.20017.241212 (Arduino-ESP32 2.0.17)

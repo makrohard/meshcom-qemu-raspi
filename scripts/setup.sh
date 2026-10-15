@@ -24,7 +24,7 @@ UPSTREAM_URL="https://github.com/icssw-org/MeshCom-Firmware.git"
 
 # Pinned commit; the overlay patch applies to it.
 # (Configurable: edit this, or override per-run with --dev / --ref.)
-DEFAULT_REF="ad36784f8d93d93d9569de9334e089ec3cfed5b5"   # icssw-org dev ad36784f (2026-09-28, with PR #1164/#1165/#1166) — the overlay applies to it
+DEFAULT_REF="8770f9b5d1abe9f4ffb13c88e0181be3895d351e"   # icssw-org dev 8770f9b5 (2026-10-12, v4.40a-58; with the netif MTU line of e80034a) — the overlay applies to it
 REF="$DEFAULT_REF"
 # Opt-in: fetch the firmware from another repository (a local path or a fork URL) instead of upstream.
 # Used by the external-radio validation to run a local feature branch WITHOUT
