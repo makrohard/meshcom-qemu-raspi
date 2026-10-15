@@ -89,6 +89,20 @@ rm -f "$N.build-sha256"; fill "$N" 9 1 'U'; NVS6="$(region "$N" 9 5)"
 "$NI" "$T/build5.bin" "$N" >/dev/null
 check "a missing sidecar carries the node's NVS" '[ "$(region "$N" 9 5)" = "$NVS6" ]'
 
+echo "== the provisioning marker (run.sh) is valid only for an image with settings"
+M="$T/mk/node-flash.bin"; mkdir -p "$T/mk"
+echo "stamp sha" > "$M.provisioned"
+"$NI" "$T/build1.bin" "$M" >/dev/null
+check "a node image created from the build drops the marker" '[ ! -e "$M.provisioned" ]'
+echo "stamp sha" > "$M.provisioned"
+image "$T/build4.bin" 'D' 'Q'      # another partition table: the settings are reset
+"$NI" "$T/build4.bin" "$M" >/dev/null
+check "a partition-table reset drops the marker" '[ ! -e "$M.provisioned" ]'
+echo "stamp sha" > "$M.provisioned"
+image "$T/build5.bin" 'E' 'Q'      # same partition table: the settings are carried
+"$NI" "$T/build5.bin" "$M" >/dev/null
+check "carried settings keep the marker" '[ -e "$M.provisioned" ]'
+
 echo "== run.sh boots the node image, not the build output"
 R="$T/repo"; mkdir -p "$R/scripts" "$R/.work/MeshCom-Firmware/.pio/build/qemu-headless"
 cp "$REPO/scripts/run.sh" "$REPO/scripts/node-image.sh" "$REPO/scripts/node-efuse.sh" "$R/scripts/"
@@ -118,8 +132,11 @@ image "$R/.work/MeshCom-Firmware/.pio/build/qemu-headless/flash.bin" 'Z' 'P'    
 check "run.sh refuses while another guest holds the node image" '[ "$rc" -ne 0 ] && grep -q "already runs" "$T/run3.out"'
 check "the refused start leaves the node image untouched" '[ "$(stat -c %Y "$T/lhpc-state/node-flash.bin")" = "$before" ]'
 kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
+rm -f "$QEMU_STUB_ARGS"
 "$R/scripts/run.sh" --qemu "$T/qemu-stub" --node-image "$T/lhpc-state/node-flash.bin" > "$T/run4.out" 2>&1; rc=$?
-check "once the holder is gone the next start runs" '[ "$rc" -eq 0 ]'
+# The stub exits at once, so run.sh reports a failed provisioning (rc 3); what matters here is that the
+# lock no longer refuses and the guest is launched.
+check "once the holder is gone the next start runs" '! grep -q "already runs" "$T/run4.out" && [ -s "$QEMU_STUB_ARGS" ]'
 
 if [ "$FAILS" -eq 0 ]; then echo "ALL PASS"; exit 0; fi
 echo "FAILURES: $FAILS"; exit 1

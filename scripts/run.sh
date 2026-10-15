@@ -227,6 +227,8 @@ if [ "$(cat "$MARKER" 2>/dev/null | cut -d' ' -f2)" != "$PROVISION_SHA" ]; then
 fi
 
 # --- The supervised runs ----------------------------------------------------------------------------
+# FAST_RUN_S / RESTART_BUDGET: the limits (60 s, 10 per hour); tests/test-run-supervisor.sh lowers them.
+FAST_RUN_S="${FAST_RUN_S:-60}"; RESTART_BUDGET="${RESTART_BUDGET:-10}"
 fast=0; n=0; recent=()
 while :; do
 	[ "$STOP" = 0 ] || exit 0
@@ -253,10 +255,10 @@ while :; do
 	[ "$VERIFY" = 0 ] || provision_fail "the first supervised boot ended before the check" "$UARTLOG"
 	[ "$rc" = 0 ] || { echo "[run] QEMU exited rc=$rc" >&2; exit 5; }
 	now="$(date +%s)"; dur=$(( now - t0 ))
-	if [ "$dur" -lt 60 ]; then fast=$((fast+1)); else fast=0; fi
-	[ "$fast" -lt 3 ] || { echo "[run] restart limit: 3 runs shorter than 60 s in a row" >&2; exit 75; }
+	if [ "$dur" -lt "$FAST_RUN_S" ]; then fast=$((fast+1)); else fast=0; fi
+	[ "$fast" -lt 3 ] || { echo "[run] restart limit: 3 runs shorter than $FAST_RUN_S s in a row" >&2; exit 75; }
 	keep=(); for t in "${recent[@]}" "$now"; do [ $(( now - t )) -lt 3600 ] && keep+=("$t"); done; recent=("${keep[@]}")
-	[ "${#recent[@]}" -le 10 ] || { echo "[run] restart limit: more than 10 restarts within one hour" >&2; exit 75; }
+	[ "${#recent[@]}" -le "$RESTART_BUDGET" ] || { echo "[run] restart limit: more than $RESTART_BUDGET restarts within one hour" >&2; exit 75; }
 	n=$((n+1))
 	echo "[run] guest reset after $dur s -> restart #$n"
 	put "$RUN/restarts" "$n $(date -u +%Y-%m-%dT%H:%M:%SZ)"
