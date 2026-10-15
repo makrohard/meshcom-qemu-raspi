@@ -11,7 +11,7 @@ O=${1:?OUTDIR}; mkdir -p "$O"
 "${BRIDGE:?BRIDGE=<meshcom-loraham-bridge binary>}" --bind 127.0.0.1 --port 7000 --ping-interval-ms 30000 --pong-timeout-ms 90000 ${XRPW:+--password-file "$XRPW"} > "$O/bridge.log" 2>&1 & BP=$!
 scripts/run.sh --env qemu-headless-extradio-gpsd --qemu "$Q" > "$O/run.log" 2>&1 & RP=$!
 for i in $(seq 1 30); do [ -S .run/gps-uart1.sock ] && break; sleep 1; done
-python3 -I scripts/gps-relay.py --mode fixture --fixture fixtures/gps/short_track.nmea --uart .run/gps-uart1.sock --rate 1 --loop > "$O/relay.log" 2>&1 & GP=$!
+python3 -I scripts/gps-relay.py --mode fixture --fixture fixtures/gps/short_track.nmea --uart .run/gps-uart1.sock --rate "${GPS_RATE:-1}" --loop > "$O/relay.log" 2>&1 & GP=$!
 t0=$(date +%s)
 for i in $(seq 1 120); do grep -aq 'CLIENT STARTED' .run/uart-latest.log 2>/dev/null && break; sleep 1; done
 echo "client-started after $(( $(date +%s)-t0 ))s"
