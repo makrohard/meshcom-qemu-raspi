@@ -3,7 +3,7 @@
 # setup.sh — fetch the MeshCom firmware source into the local workspace.
 #
 # By default it checks out a KNOWN-WORKING, PINNED MeshCom commit
-# (DEFAULT_REF below) — the overlay patch applies to it.
+# (DEFAULT_REF below), the commit our files are validated against.
 # The pin is configurable:
 #   scripts/setup.sh                 # pinned (default, recommended)
 #   scripts/setup.sh --dev           # latest upstream dev branch (moving target)
@@ -22,9 +22,9 @@ RUN="$ROOT/.run"
 # Official upstream MeshCom firmware repository.
 UPSTREAM_URL="https://github.com/icssw-org/MeshCom-Firmware.git"
 
-# Pinned commit; the overlay patch applies to it.
+# Pinned by commit; upstream moves tags (v4.40a.hbserver moved on 2026-10-13), so a tag is only a label.
 # (Configurable: edit this, or override per-run with --dev / --ref.)
-DEFAULT_REF="ad36784f8d93d93d9569de9334e089ec3cfed5b5"   # icssw-org dev ad36784f (2026-09-28, with PR #1164/#1165/#1166) — the overlay applies to it
+DEFAULT_REF="f2b3a3496a76f327abec8b7228bce436cafe9606"   # icssw-org dev f2b3a349 (2026-10-13; tag v4.40a.hbserver at the time)
 REF="$DEFAULT_REF"
 # Opt-in: fetch the firmware from another repository (a local path or a fork URL) instead of upstream.
 # Used by the external-radio validation to run a local feature branch WITHOUT
@@ -69,7 +69,9 @@ elif [ -d "$SRC/.git" ]; then
 	echo "[setup] workspace already present at $SRC; fetching latest"
 	git -C "$SRC" remote set-url origin "$UPSTREAM_URL"
 	git -C "$SRC" fetch --depth 1 origin "$REF"
-	git -C "$SRC" checkout -q FETCH_HEAD
+	# -f: the workspace belongs to these scripts; a tracked file left modified (by an older runner that
+	# patched MeshCom) is reset to the stock file, which apply-overlay.sh then requires.
+	git -C "$SRC" checkout -q -f FETCH_HEAD
 else
 	# fetch-by-ref, not `clone --branch`: a pinned commit SHA is a valid ref here (the
 	# lhpc manifest passes one), and `--branch` accepts only branch and tag names.
@@ -85,10 +87,10 @@ SHA="$(git -C "$SRC" rev-parse HEAD)"
 echo "$SHA" > "$RUN/meshcom-source.sha"
 date -u +"%Y-%m-%dT%H:%M:%SZ" > "$RUN/meshcom-source.timestamp"
 
-# --- fail clearly if the layout the overlay expects is not present ---
-for p in platformio.ini src/esp32/esp32_main.cpp src/web_functions/web_functions.cpp \
-         src/net_console.cpp src/udp_functions.cpp src/batt_function_old.cpp; do
-	[ -e "$SRC/$p" ] || { echo "ERROR: upstream layout changed — missing '$p'. The overlay/patch may need maintenance." >&2; exit 3; }
+# --- fail clearly if a file our code builds against is missing ---
+for p in platformio.ini src/configuration_global.h src/udp_functions.cpp src/esp32/esp32_eth.cpp \
+         src/esp32/esp32_eth.h src/esp32/esp32_flash.h src/esp32/external_radio_glue.cpp; do
+	[ -e "$SRC/$p" ] || { echo "ERROR: upstream layout changed — missing '$p'. Our files need maintenance." >&2; exit 3; }
 done
 grep -q 'variants/\*/platformio.ini' "$SRC/platformio.ini" || \
 	echo "[setup] WARN: top-level platformio.ini no longer globs variants/*; the qemu-headless env may not be picked up."

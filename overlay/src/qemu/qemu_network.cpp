@@ -45,11 +45,16 @@ static void eth_event_handler(void *, esp_event_base_t, int32_t event_id, void *
             Serial.printf("[QEMU]...dhcpc_start -> 0x%x (0=started, 0x%x=already-running)\n",
                           (int)de, ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED);
         }
+        // The static user-network address (qemuMaybeApplyStatic) is not followed by a GOT_IP event,
+        // so a reconnect restores its readiness here; a DHCP address returns with GOT_IP.
+        if (s_static_applied)
+            s_got_ip = true;
         break;
     case ETHERNET_EVENT_DISCONNECTED:
         Serial.println("[QEMU]...OpenETH link disconnected");
-        // Genuine link loss: clear the strict event-readiness so the external-radio
-        // transport's gate drops and it stops safely (recovers on the next GOT_IP).
+        // Link loss: neither readiness survives it. qemuNetworkGetIp() returns false while s_got_ip is
+        // false, so the stored address is not exposed until the link and an address return.
+        s_got_ip = false;
         s_got_ip_event = false;
         break;
     case ETHERNET_EVENT_START:
@@ -57,6 +62,7 @@ static void eth_event_handler(void *, esp_event_base_t, int32_t event_id, void *
         break;
     case ETHERNET_EVENT_STOP:
         Serial.println("[QEMU]...OpenETH driver stopped");
+        s_got_ip = false;
         s_got_ip_event = false;
         break;
     default:
@@ -75,11 +81,11 @@ static void got_ip_event_handler(void *, esp_event_base_t, int32_t, void *event_
     s_got_ip_event = true;
 }
 
-// Genuine loss of a usable IPv4 lease (DHCP lease lost / link down). Clears strict
-// event-readiness; the external-radio transport gate drops and recovers on the next GOT_IP.
+// Loss of the IPv4 lease: both readiness flags go; they return with the next GOT_IP.
 static void lost_ip_event_handler(void *, esp_event_base_t, int32_t, void *)
 {
     Serial.println("[QEMU]...OpenETH LOST_IP (usable IPv4 lease lost)");
+    s_got_ip = false;
     s_got_ip_event = false;
 }
 
@@ -87,6 +93,10 @@ bool qemuNetworkStart()
 {
     if (s_started)
         return true;
+#ifdef QEMU_TEST_NO_OPENETH
+    // Test build only (tests/test-boot-gates.sh, gate k): the driver never starts.
+    return false;
+#endif
 
     esp_err_t e = esp_netif_init();
     if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) {

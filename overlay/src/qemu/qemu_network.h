@@ -22,9 +22,9 @@
 // the driver; readiness is signalled later via qemuNetworkReady().
 bool qemuNetworkStart();
 
-// True once the QEMU PoC network is usable: after IP_EVENT_ETH_GOT_IP, OR after the
-// transparent SLIRP static fallback (see qemuMaybeApplyStatic). Used by the default
-// qemu-headless services (web UI / net-console / udp) in both environments.
+// True while the network is usable: after IP_EVENT_ETH_GOT_IP or the transparent SLIRP static
+// fallback (see qemuMaybeApplyStatic), and false again after a link loss, a driver stop or a lost
+// lease. Read by the address hand-over (qemu_ethmode.cpp) and the ETHClass2 stand-in.
 bool qemuNetworkReady();
 
 // STRICT, event-backed readiness: true ONLY after a genuine IP_EVENT_ETH_GOT_IP and
