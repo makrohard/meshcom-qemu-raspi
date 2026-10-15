@@ -27,18 +27,26 @@ except Exception as e: d=repr(e).encode()
 print("console accepted; first bytes:", len(d), d[:60])
 PY
 cat "$O/console.txt"
-console_cmd() { python3 -I - "$1" <<'PY'
+console_cmd() { python3 -I - "$@" <<'PY'
 import socket,sys,time
 s=socket.create_connection(("127.0.0.1",12323),timeout=10); s.settimeout(3)
 try: s.recv(256)
 except Exception: pass
 s.sendall((sys.argv[1]+"\r\n").encode()); time.sleep(4)
-try: print("reply:", s.recv(512)[:120])
-except Exception as e: print("reply:", repr(e))
+try: d=s.recv(8192)
+except Exception as e: d=repr(e).encode()
+if len(sys.argv)>2:
+    import re
+    print("reply-extract:", " | ".join(re.findall(sys.argv[2], d.decode(errors="replace"))))
+else: print("reply:", d[:120])
 PY
 }
 xrbytes() { ss -tin '( sport = :7000 )' | grep -oE 'bytes_(sent|received):[0-9]+' | paste -sd' '; }
 sleep 10; echo "xr before: $(xrbytes)"; echo "sendpos:"; console_cmd "--sendpos"; sleep 20; echo "xr after:  $(xrbytes)"
+echo "page tail: $(tail -c 9 "$O/page_.html" | tr -d '\n')"
+echo "info:"; console_cmd "--info" '\.\.\.MESH (?:on|off)|\.\.\.EXTUDP (?:on|off)|Gateway (?:on|off)'
+curl -s -m 60 -o "$O/spectrum.html" -w "spectrum code=%{http_code} bytes=%{size_download} secs=%{time_total}\n" "http://127.0.0.1:18083/?page=spectrum" || echo "spectrum curl-fail rc=$?"
+curl -s -m 20 -o /dev/null -w "web after spectrum code=%{http_code}\n" http://127.0.0.1:18083/ || echo "web after spectrum curl-fail"
 kill -0 $RP 2>/dev/null && echo "after sendpos: qemu alive" || { wait $RP; echo "after sendpos: run.sh/QEMU ended rc=$?"; }
 if [ "${G4:-0}" = 1 ]; then
   echo "reboot:"; console_cmd "--reboot"
