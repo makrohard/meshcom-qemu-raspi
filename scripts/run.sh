@@ -97,6 +97,7 @@ ln -sf "uart-$STAMP.log" "$RUN/uart-latest.log"
 QEMU_CMD=(
 	"$QEMU_BIN"
 	-nographic
+	-no-reboot   # a guest reset exits QEMU (a reset inside qemu-xtensa wedges in the ROM); the caller restarts it
 	-machine esp32
 	-m 4M
 	-drive "file=$NODE_IMAGE,if=mtd,format=raw"

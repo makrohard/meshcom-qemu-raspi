@@ -69,6 +69,23 @@
 #define DISABLE_BATTERY
 #define DISABLE_BLE
 
+// Upstream's Ethernet mode (node_netmode == 1) opens the web, net-console and startNetwork() gates
+// without Wi-Fi. Its W5500 driver (src/esp32/esp32_eth.cpp) is compiled but never reached: the OpenETH
+// code in src/qemu/ reports the IP before setup() calls startNetwork(). The pins are placeholders.
+#define HAS_ETHERNET
+#define ETH_CS_PIN    15
+#define ETH_INT_PIN   4
+#define ETH_RST_PIN   25
+#define ETH_SCLK_PIN  18
+#define ETH_MISO_PIN  19
+#define ETH_MOSI_PIN  23
+// startNetwork() (udp_functions.cpp) names the W5500 object `neth` under HAS_ETHERNET, but upstream
+// declares and defines it only for its two Ethernet boards. Declared here, defined in src/qemu/.
+#ifdef __cplusplus
+#include "esp32/esp32_eth.h"
+extern EspETH neth;
+#endif
+
 // Upstream's neighbour matrix (src/nbr_matrix.h, since v4.40a) requires this value; upstream
 // variants get it from src/configuration_default.h, included last. This variant states the one
 // value instead: that file switches the fleet's sensor flags on (and older revisions lack it).
