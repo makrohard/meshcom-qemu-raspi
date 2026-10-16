@@ -110,6 +110,7 @@ if [[ "$MODES" == *" --main "* ]]; then
 	waitfor 'grep -q "provisioning verified" "$G/run.log"' 900
 	gate "j  provisioned and verified (marker written)" '[ -s "$NODE.provisioned" ]'
 	B1="$(UARTLOG)"
+	waitfor 'grep -aq "ethmode: IP .* reported" "$B1"' 60      # the line is written from 5 s of uptime on
 	gate "b  [BOOT];ready with ip;1, no [ETH] init, address published before it (first boot)" 'ready_with_address "$B1"'
 	pre_ap="$(grep -ac 'WIFIAP starting' "$B1")"
 	console "--setcall $CALL" 'Call:\S+ Short:\S+ set' > "$G/setcall.txt"
@@ -118,6 +119,7 @@ if [[ "$MODES" == *" --main "* ]]; then
 	B2="$(UARTLOG)"
 	gate "j  --setcall -> one supervised restart, AP flag off, web 200, callsign kept" \
 		'grep -q "Call:" "$G/setcall.txt" && [ "$pre_ap" -ge 1 ] && [ "$(grep -ac "WIFIAP starting" "$B2")" = 0 ] && [ "$(web)" = 200 ] && grep -aq "BLE-Name <.*-${CALL%-*}-" "$B2"'
+	waitfor 'grep -aq "ethmode: IP .* reported" "$B2"' 60
 	gate "b  [BOOT];ready with ip;1, no [ETH] init, address published before it (restart)" 'ready_with_address "$B2"'
 	gate "c  web 200, console banner and authenticated" '[ "$(web)" = 200 ] && console_ok && grep -aq "Client authenticated" "$B2"'
 	sleep 45; cp "$G/tap.log" "$G/tap-control.log"
