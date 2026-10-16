@@ -3,15 +3,20 @@
 # stop.sh — stop the runner (scripts/run.sh) and its QEMU guest.
 #
 # A PID file is trusted only for a process that still is what it names: run.pid only if that process
-# holds this checkout's .run/run.lock open, qemu.pid only if that process is qemu-system-xtensa using a
-# node image of this runner. A stale or reused PID is never signalled; its file is removed.
+# holds this checkout's .run/run.lock open, qemu.pid only if that process is qemu-system-xtensa on a node
+# image with this checkout's monitor socket. A stale or reused PID is never signalled; its file is removed.
 # EXIT CODE: 0, also when nothing runs.
 set -eu
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN="$ROOT/.run"
 
 is_runner() { [ -n "$1" ] && find "/proc/$1/fd" -maxdepth 1 -lname "$RUN/run.lock" 2>/dev/null | grep -q .; }
-is_qemu() { [ -n "$1" ] && { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null | grep -q 'qemu-system-xtensa .*-drive file=.*\.bin,if=mtd'; }
+# A guest of THIS runner: qemu-system-xtensa with an MTD node image and this checkout's monitor socket
+# (run.sh passes -monitor unix:$RUN/monitor.sock); another runner's guest has its own socket.
+is_qemu() {
+	local c; c="$( { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null)" || return 1
+	printf '%s' "$c" | grep -q 'qemu-system-xtensa .*-drive file=.*\.bin,if=mtd' && printf '%s' "$c" | grep -qF "unix:$RUN/monitor.sock,"
+}
 # stop_pid PID: TERM, up to 15 s, then KILL.
 stop_pid() {
 	kill -TERM "$1" 2>/dev/null || true

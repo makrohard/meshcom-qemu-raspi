@@ -190,7 +190,18 @@ sleep 100 & DECOY=$!
 cp "$R/.run/run.pid" "$T/run.pid.real"; echo "$DECOY" > "$R/.run/run.pid"; echo "$DECOY" > "$R/.run/qemu.pid"
 "$R/scripts/stop.sh" > "$T/stop2.out"; src=$?
 check "stop.sh does not signal a reused pid (rc 0)" '[ "$src" = 0 ] && kill -0 "$DECOY" 2>/dev/null && grep -q "not this checkout" "$T/stop2.out"'
-kill "$DECOY"; cp "$T/run.pid.real" "$R/.run/run.pid"
+kill "$DECOY"
+# Another runner's guest: a qemu-system-xtensa with a node image on its own MTD drive, but another
+# runner's monitor socket. A stale qemu.pid naming it must not be signalled.
+mkdir -p "$T/other"; printf '#!/usr/bin/env python3\nimport time\ntime.sleep(100)\n' > "$T/other/qemu-system-xtensa"; chmod +x "$T/other/qemu-system-xtensa"
+"$T/other/qemu-system-xtensa" -drive "file=$T/other/node.bin,if=mtd,format=raw" -monitor "unix:$T/other/monitor.sock,server=on,wait=off" & OTHERQ=$!
+sleep 0.5; tr '\0' ' ' < "/proc/$OTHERQ/cmdline" > "$T/other/cmdline"   # the decoy passes the generic predicate
+check "the decoy looks like a guest (qemu-system-xtensa, an MTD .bin drive)" 'grep -q "qemu-system-xtensa .*-drive file=.*\.bin,if=mtd" "$T/other/cmdline"'
+echo "$OTHERQ" > "$R/.run/qemu.pid"; echo 99999999 > "$R/.run/run.pid"
+"$R/scripts/stop.sh" > "$T/stop4.out"; src4=$?
+check "stop.sh does not signal another runner's QEMU named by a stale qemu.pid (rc 0)" '[ "$src4" = 0 ] && kill -0 "$OTHERQ" 2>/dev/null && grep -q "not a running guest" "$T/stop4.out"'
+kill "$OTHERQ" 2>/dev/null; wait "$OTHERQ" 2>/dev/null
+cp "$T/run.pid.real" "$R/.run/run.pid"; echo "$(pgrep -f "[q]emu-stub" | head -1)" > "$R/.run/qemu.pid"
 "$R/scripts/status.sh" > "$T/status.out"; ssrc=$?
 check "status.sh shows a running guest, rc 0" '[ "$ssrc" = 0 ]'
 "$R/scripts/stop.sh" >/dev/null; finish
