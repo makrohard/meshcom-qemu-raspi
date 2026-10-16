@@ -1,0 +1,94 @@
+# Weekly build and boot gates of stock MeshCom under QEMU (tests/test-boot-gates.sh), on the runner type
+# the LoRaHAM binaries are built and smoke-tested on (aarch64). The schedule tests upstream's moving `dev`
+# tip, as an early warning before a pin move; a dispatch tests any ref (default: setup.sh's DEFAULT_REF).
+# A failure opens one issue, or comments on the open one, naming the upstream commit and the failing gates;
+# a pass is silent. GitHub disables scheduled workflows after 60 days without a commit to the default
+# branch (README, Tests).
+name: boot-gates
+on:
+  schedule:
+    - cron: '41 3 * * 2'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "MeshCom ref to test (empty = setup.sh's DEFAULT_REF)"
+        required: false
+        default: ''
+permissions:
+  contents: read
+  issues: write
+env:
+  ISSUE_TITLE: 'boot gates failing'
+  # The commits this job builds against (the controller's link-gate script, the bridge at the manifest pin).
+  LHPC_COMMIT: eb9673a48c1a6c4f7d537f6b319c8ad3c7f6fc6d
+  BRIDGE_COMMIT: 7c86c96aa5ae9c1359aff85c761028910be5cd91
+jobs:
+  gates:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q git curl build-essential cmake ninja-build pkg-config libglib2.0-dev \
+            libpixman-1-dev libslirp-dev libslirp0 zlib1g-dev libgcrypt20-dev libssl-dev shellcheck python3-pip
+          # QEMU 9.2 needs meson >= 1.5 (scripts/build-qemu.sh checks it); the distribution's is older.
+          pip install --user --break-system-packages 'meson>=1.5' platformio==6.1.19
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Shellcheck and the quick tests
+        run: |
+          # The scripts this layout added or changed; warnings and errors fail the job.
+          shellcheck -x -S warning scripts/{run,stop,status,apply-overlay,setup,node-image,test}.sh \
+            tests/{test-apply-overlay,test-run-supervisor,test-boot-gates,test-node-image}.sh
+          for t in tests/test-apply-overlay.sh tests/test-run-supervisor.sh tests/test-node-image.sh \
+                   tests/test-node-efuse.sh tests/test-setup-src.sh; do echo "== $t"; bash "$t"; done
+      - name: QEMU (cached by recipe and patch)
+        id: qemu-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/qemu
+          key: qemu-${{ runner.arch }}-${{ hashFiles('scripts/build-qemu.sh', 'scripts/lib-publish.sh', 'patches/qemu/**') }}
+      - name: Build QEMU
+        if: steps.qemu-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/makrohard/loraham-pi-control/$LHPC_COMMIT/lhpc/data/scripts/meshtastic-link-gate.sh" -o "$RUNNER_TEMP/link-gate.sh"
+          chmod +x "$RUNNER_TEMP/link-gate.sh"
+          scripts/build-qemu.sh "$RUNNER_TEMP/qemu" --link-gate "$RUNNER_TEMP/link-gate.sh"
+      - name: Bridge
+        run: |
+          git clone -q https://github.com/makrohard/meshcom-loraham-bridge "$RUNNER_TEMP/bridge"
+          git -C "$RUNNER_TEMP/bridge" checkout -q "$BRIDGE_COMMIT"
+          cmake -S "$RUNNER_TEMP/bridge" -B "$RUNNER_TEMP/bridge/build" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/bridge/build" --parallel
+      - name: MeshCom at the ref
+        id: ref
+        env:
+          INPUT_REF: ${{ github.event.inputs.ref }}
+        run: |
+          if [ "${{ github.event_name }}" = schedule ]; then
+            ref="$(git ls-remote https://github.com/icssw-org/MeshCom-Firmware.git refs/heads/dev | cut -f1)"
+          else
+            ref="$INPUT_REF"
+          fi
+          if [ -n "$ref" ]; then scripts/setup.sh --ref "$ref"; else scripts/setup.sh; fi
+          echo "sha=$(git -C .work/MeshCom-Firmware rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          scripts/apply-overlay.sh
+          scripts/prepare-openeth.sh
+      - name: Boot gates
+        run: |
+          BRIDGE="$RUNNER_TEMP/bridge/build/meshcom-loraham-bridge" QEMU_BIN="$RUNNER_TEMP/qemu/qemu/bin/qemu-system-xtensa" \
+            PIO="$HOME/.local/bin/pio" tests/test-boot-gates.sh --main --controls --slow 2>&1 | tee "$RUNNER_TEMP/gates.log"
+          exit "${PIPESTATUS[0]}"
+      - name: Report a failure in one issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.ref.outputs.sha }}
+        run: |
+          set -eu
+          fails="$(grep -E '^FAIL' "$RUNNER_TEMP/gates.log" 2>/dev/null || echo "(a step before the boot gates failed; see the run)")"
+          body="$(printf 'Run %s on MeshCom %s (%s):\n\n```\n%s\n```\n' \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" "${SHA:-unknown}" "${{ github.event_name }}" "$fails")"
+          n="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$n" ]; then gh issue comment "$n" --body "$body"; else gh issue create --title "$ISSUE_TITLE" --body "$body"; fi

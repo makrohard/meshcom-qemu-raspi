@@ -97,9 +97,10 @@ rm -f "$RUN/uart-latest.log"
 # ldconfig lives), and an off-PATH ldconfig must NOT be read as "library missing" (live finding — it
 # false-failed under lhpc's stack-run environment on a Pi Zero 2W). The library being present on disk is
 # authoritative regardless of whether ldconfig is reachable.
-{ ldconfig -p 2>/dev/null | grep -q 'libslirp\.so\.0'; } \
-	|| ls /lib/*/libslirp.so.0 /usr/lib/*/libslirp.so.0 /usr/lib/libslirp.so.0 2>/dev/null | grep -q libslirp || {
-	echo "ERROR: libslirp.so.0 missing. Install with: sudo apt-get install -y libslirp0" >&2; exit 1; }
+slirp=0
+{ ldconfig -p 2>/dev/null | grep -q 'libslirp\.so\.0'; } && slirp=1
+for f in /lib/*/libslirp.so.0 /usr/lib/*/libslirp.so.0 /usr/lib/libslirp.so.0; do [ -e "$f" ] && slirp=1; done
+[ "$slirp" = 1 ] || { echo "ERROR: libslirp.so.0 missing. Install with: sudo apt-get install -y libslirp0" >&2; exit 1; }
 
 # Commas below are intentional inside quoted QEMU option strings.
 # shellcheck disable=SC2054
@@ -183,7 +184,8 @@ DEADLINE=0
 provision_fail() { echo "[run] provisioning FAILED: $1 (log: $2)" >&2; stop_qemu; exit 3; }
 
 provision() {
-	local log="$RUN/uart-provision-$(date -u +%Y%m%dT%H%M%SZ).log" fifo="$RUN/uart0.in" c
+	local log fifo="$RUN/uart0.in" c
+	log="$RUN/uart-provision-$(date -u +%Y%m%dT%H%M%SZ).log"
 	DEADLINE=$(( $(date +%s) + PROVISION_TIMEOUT ))
 	echo "[run] provisioning the node (log $log)"
 	rm -f "$fifo"; mkfifo -m 600 "$fifo"; exec 7<>"$fifo"; rm -f "$fifo"

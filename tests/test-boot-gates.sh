@@ -15,6 +15,8 @@
 # The slow modes leave their test build in the workspace; --main (or scripts/build.sh) builds it again.
 # Ports 7000/7001 (bridge, tap), 12323/18083 (guest) must be free. The test password is random per run
 # and never printed; the test callsign is a placeholder. EXIT: 0 = every selected gate as expected.
+# Each gate is an eval'd string, so its variables look unexpanded/unused to shellcheck.
+# shellcheck disable=SC2016,SC2034
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FW="$ROOT/.work/MeshCom-Firmware"
