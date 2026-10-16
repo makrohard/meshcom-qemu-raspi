@@ -29,17 +29,31 @@
 // Declared in the variant's configuration.h.
 EspETH neth;
 
+#define QEMU_LOG_AFTER_MS 5000UL
+
 extern WiFiUDP Udp;          // udp_functions.cpp
 extern bool hasIPaddress;    // udp_functions.cpp
 
 static void qemuEthModeTask(void *)
 {
+    // The address is published at once; its log line waits until setup() has run (5 s of uptime; the measured
+    // boots reach [BOOT];ready at 2-4 s), since a line written while Serial.begin() reinstalls the UART
+    // driver can be lost. The line carries the publish time.
     bool reported = false;
+    unsigned long published_ms = 0;
+    char reported_ip[16] = "";
     for (;;) {
         IPAddress ip, gw, mask;
         if (qemuNetworkReady() && qemuNetworkGetIp(ip, gw, mask)) {
-            if (!hasIPaddress && Udp.begin(LOCAL_PORT))
-                hasIPaddress = true;
+            if (!hasIPaddress) {
+                static bool udp_fail_logged = false;
+                if (Udp.begin(LOCAL_PORT)) {
+                    hasIPaddress = true;
+                } else if (!udp_fail_logged && millis() >= QEMU_LOG_AFTER_MS) {
+                    Serial.printf("[QEMU]...ethmode: UDP port %d open failed; retrying, address not published\n", LOCAL_PORT);
+                    udp_fail_logged = true;
+                }
+            }
             if (hasIPaddress) {
                 char ip_s[16];
                 snprintf(ip_s, sizeof(ip_s), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
@@ -49,8 +63,12 @@ static void qemuEthModeTask(void *)
                     snprintf(meshcom_settings.node_subnet, sizeof(meshcom_settings.node_subnet), "%u.%u.%u.%u", mask[0], mask[1], mask[2], mask[3]);
                     meshcom_settings.node_hasIPaddress = true;
                 }
-                if (!reported) {
-                    Serial.printf("[QEMU]...ethmode: IP %s reported (%lu ms)\n", ip_s, (unsigned long)millis());
+                if (!published_ms) {
+                    published_ms = millis();
+                    snprintf(reported_ip, sizeof(reported_ip), "%s", ip_s);
+                }
+                if (!reported && millis() >= QEMU_LOG_AFTER_MS) {
+                    Serial.printf("[QEMU]...ethmode: IP %s reported (%lu ms)\n", reported_ip, published_ms);
                     reported = true;
                 }
             }
@@ -59,6 +77,7 @@ static void qemuEthModeTask(void *)
             meshcom_settings.node_hasIPaddress = false;
             hasIPaddress = false;
             reported = false;
+            published_ms = 0;
             Serial.printf("[QEMU]...ethmode: no address; readiness withdrawn (%lu ms)\n", (unsigned long)millis());
         }
 #ifdef QEMU_TEST_CLEAR_FLAG_MS

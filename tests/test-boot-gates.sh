@@ -87,6 +87,12 @@ stop_all() {
 	[ -n "$TP" ] && kill "$TP" 2>/dev/null; [ -n "$BP" ] && kill "$BP" 2>/dev/null; wait 2>/dev/null; TP=""; BP=""
 }
 trap stop_all EXIT
+# ready_with_address FILE: upstream's [BOOT];ready line (printed after setup() called startNetwork()) shows
+# the address flag set (ip;1), no "[ETH] init" ran (the stand-in path), and the hand-over reported its
+# address with a publish time earlier than that line's.
+ready_with_address() { local p r; p=$(grep -aoE 'ethmode: IP .* reported \([0-9]+ ms\)' "$1" | head -1 | grep -oE '[0-9]+ ms' | grep -oE '[0-9]+'); \
+	r=$(grep -aoE '\[BOOT\];ready;ms;[0-9]+;ip;1' "$1" | head -1 | cut -d';' -f4); \
+	[ -n "$r" ] && ! grep -aq '\[ETH\] init' "$1" && [ -n "$p" ] && [ "$p" -lt "$r" ]; }
 # order L1 L2 FILE: line L1 occurs before L2
 order() { local a b; a=$(grep -anm1 -- "$1" "$3" | cut -d: -f1); b=$(grep -anm1 -- "$2" "$3" | cut -d: -f1); [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; }
 
@@ -104,7 +110,7 @@ if [[ "$MODES" == *" --main "* ]]; then
 	waitfor 'grep -q "provisioning verified" "$G/run.log"' 900
 	gate "j  provisioned and verified (marker written)" '[ -s "$NODE.provisioned" ]'
 	B1="$(UARTLOG)"
-	gate "b  address reported before CLIENT SETUP (first boot)" 'order "ethmode: IP .* reported" "CLIENT SETUP" "$B1"'
+	gate "b  [BOOT];ready with ip;1, no [ETH] init, address published before it (first boot)" 'ready_with_address "$B1"'
 	pre_ap="$(grep -ac 'WIFIAP starting' "$B1")"
 	console "--setcall $CALL" 'Call:\S+ Short:\S+ set' > "$G/setcall.txt"
 	waitfor 'grep -q "restart #1" "$G/run.log"' 180
@@ -112,7 +118,7 @@ if [[ "$MODES" == *" --main "* ]]; then
 	B2="$(UARTLOG)"
 	gate "j  --setcall -> one supervised restart, AP flag off, web 200, callsign kept" \
 		'grep -q "Call:" "$G/setcall.txt" && [ "$pre_ap" -ge 1 ] && [ "$(grep -ac "WIFIAP starting" "$B2")" = 0 ] && [ "$(web)" = 200 ] && grep -aq "BLE-Name <.*-${CALL%-*}-" "$B2"'
-	gate "b  address reported before CLIENT SETUP (restart), no [ETH] init" 'order "ethmode: IP .* reported" "CLIENT SETUP" "$B2" && ! grep -aq "\[ETH\] init" "$B1" "$B2"'
+	gate "b  [BOOT];ready with ip;1, no [ETH] init, address published before it (restart)" 'ready_with_address "$B2"'
 	gate "c  web 200, console banner and authenticated" '[ "$(web)" = 200 ] && console_ok && grep -aq "Client authenticated" "$B2"'
 	sleep 45; cp "$G/tap.log" "$G/tap-control.log"
 	console "--sendpos" > /dev/null; sleep 20
