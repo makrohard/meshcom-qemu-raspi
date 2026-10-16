@@ -7,10 +7,13 @@
 # image with this checkout's monitor socket. A PID whose process fails that check is not signalled; its file
 # is removed.
 # The check is repeated before a SIGKILL (stop_pid).
-# EXIT CODE: 0, also when nothing runs.
+# EXIT CODE: 0, also when nothing runs; 2 for an invalid --instance.
 set -eu
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUN="$ROOT/.run"
+RUN="$ROOT/.run"   # --instance <n> (n > 0): the runner started with the same --instance
+if [ "${1:-}" = "--instance" ]; then
+	case "${2:-}" in [1-9]) RUN="$ROOT/.run/$2" ;; 0) ;; *) echo "ERROR: --instance must be 0-9" >&2; exit 2 ;; esac
+fi
 
 is_runner() { [ -n "$1" ] && find "/proc/$1/fd" -maxdepth 1 -lname "$RUN/run.lock" 2>/dev/null | grep -q .; }
 # A guest of THIS runner: qemu-system-xtensa with an MTD node image and this checkout's monitor socket

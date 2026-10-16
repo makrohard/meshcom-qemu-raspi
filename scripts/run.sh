@@ -19,11 +19,14 @@
 # (--node-image <path>; default .state/node-flash.bin in this repo).
 # The node's MAC, and with it MeshCom's node ID, comes from an efuse image that belongs to the node image
 # (<node image>.efuse), created once by scripts/node-efuse.sh.
+# A second guest on the same host (the test lab's two-node MeshCom row) runs with --instance <n>: host
+# ports 18083+10n / 12323+10n and .run/<n>/ (n = 0, the default, is exactly the single-guest layout), and
+# --xr-redirect <guest port>:<host port> sends the firmware's compiled-in bridge address
+# (10.0.2.2:<guest port>) to that instance's own bridge on the host.
 set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/.work/MeshCom-Firmware"
-RUN="$ROOT/.run"; mkdir -p "$RUN"
 
 # Soft pin: the official Espressif QEMU build this overlay is verified against.
 # This is documentation + a warning, NOT a hard requirement (no pinning by install).
@@ -32,14 +35,25 @@ KNOWN_GOOD_QEMU="QEMU emulator version 9.2.2"
 QEMU_OVERRIDE=""
 ENV_NAME="qemu-headless"   # opt-in: --env qemu-headless-extradio for the external-radio target
 NODE_IMAGE="$ROOT/.state/node-flash.bin"
+INSTANCE=0
+XR_REDIRECT=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--qemu) QEMU_OVERRIDE="${2:?--qemu needs a path}"; shift 2 ;;
 		--env) ENV_NAME="${2:?--env needs a value}"; shift 2 ;;
 		--node-image) NODE_IMAGE="${2:?--node-image needs a path}"; shift 2 ;;
+		--instance) INSTANCE="${2:?--instance needs a number}"; shift 2 ;;
+		--xr-redirect) XR_REDIRECT="${2:?--xr-redirect needs <guest port>:<host port>}"; shift 2 ;;
 		*) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
+case "$INSTANCE" in [0-9]) ;; *) echo "ERROR: --instance must be 0-9, got: $INSTANCE" >&2; exit 2 ;; esac
+[ -z "$XR_REDIRECT" ] || [[ "$XR_REDIRECT" =~ ^[0-9]+:[0-9]+$ ]] || { echo "ERROR: --xr-redirect must be <guest port>:<host port>" >&2; exit 2; }
+RUN="$ROOT/.run"; [ "$INSTANCE" = 0 ] || RUN="$ROOT/.run/$INSTANCE"
+mkdir -p "$RUN"
+WEB_PORT=$((18083 + 10 * INSTANCE)); CON_PORT=$((12323 + 10 * INSTANCE))
+NIC="user,id=net0,model=open_eth,hostfwd=tcp:127.0.0.1:$WEB_PORT-:80,hostfwd=tcp:127.0.0.1:$CON_PORT-:2323"
+[ -z "$XR_REDIRECT" ] || NIC="$NIC,guestfwd=tcp:10.0.2.2:${XR_REDIRECT%%:*}-tcp:127.0.0.1:${XR_REDIRECT#*:}"
 FLASH="$SRC/.pio/build/$ENV_NAME/flash.bin"
 NODE_EFUSE="$NODE_IMAGE.efuse"
 
@@ -113,7 +127,7 @@ QEMU_CMD=(
 	-drive "file=$NODE_IMAGE,if=mtd,format=raw"
 	-drive "file=$NODE_EFUSE,if=none,format=raw,id=efuse"
 	-global driver=nvram.esp32.efuse,property=drive,value=efuse
-	-nic "user,id=net0,model=open_eth,hostfwd=tcp:127.0.0.1:18083-:80,hostfwd=tcp:127.0.0.1:12323-:2323"
+	-nic "$NIC"
 	-global driver=timer.esp32.timg,property=wdt_disable,value=true
 	# UART0 = the console on stdio. mon:stdio (as -nographic sets by default) keeps the output flowing when
 	# stdin is at EOF (a background job's stdin); a plain stdio backend stops there. The monitor socket
@@ -138,8 +152,8 @@ if [ "$GPS" = "1" ]; then
 fi
 
 echo "[run] $(printf '%q ' "${QEMU_CMD[@]}")" > "$RUN/qemu-cmdline.txt"
-echo "[run] web UI:      http://127.0.0.1:18083/"
-echo "[run] net-console: 127.0.0.1:12323"
+echo "[run] web UI:      http://127.0.0.1:$WEB_PORT/"
+echo "[run] net-console: 127.0.0.1:$CON_PORT"
 [ "$GPS" = "1" ] && echo "[run] GPS UART1:    $GPS_SOCK    (feed: scripts/gps-relay.py --uart $GPS_SOCK …)"
 
 # --- Supervisor -------------------------------------------------------------------------------------
@@ -227,7 +241,7 @@ provision() {
 
 # console_reply CMD: one command on the net console, the reply on stdout (for a variable, never a file)
 console_reply() {
-	timeout 20 bash -c 'exec 3<>/dev/tcp/127.0.0.1/12323 || exit 1; sleep 2; printf "%s\r\n" "$1" >&3; timeout 8 cat <&3' _ "$1" 2>/dev/null || true
+	timeout 20 bash -c 'exec 3<>"/dev/tcp/127.0.0.1/$2" || exit 1; sleep 2; printf "%s\r\n" "$1" >&3; timeout 8 cat <&3' _ "$1" "$CON_PORT" 2>/dev/null || true
 }
 # verify_persisted LOG: the first supervised boot shows Ethernet mode and the console, then the console's
 # --info (and --pos for a *-gpsd env) and the web page confirm the persisted settings. The replies are held
@@ -244,7 +258,7 @@ verify_persisted() {
 		pos="$(console_reply "--pos")"
 		case "$pos" in *'...GPS: on'*) ;; *) echo "[run] provisioning check: '--pos' lacks '...GPS: on'" >&2; return 1 ;; esac
 	fi
-	code="$(timeout 15 bash -c 'exec 4<>/dev/tcp/127.0.0.1/18083 || exit 1; printf "GET / HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n" >&4; head -n 1 <&4' 2>/dev/null || true)"
+	code="$(timeout 15 bash -c 'exec 4<>"/dev/tcp/127.0.0.1/$1" || exit 1; printf "GET / HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n" >&4; head -n 1 <&4' _ "$WEB_PORT" 2>/dev/null || true)"
 	case "$code" in *" 200"*) return 0 ;; *) echo "[run] provisioning check: web answered '${code%$'\r'}'" >&2; return 1 ;; esac
 }
 
