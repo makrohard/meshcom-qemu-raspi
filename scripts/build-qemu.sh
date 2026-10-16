@@ -4,7 +4,9 @@
 # pinned Espressif commit and publish it transactionally into a target directory. Managed provisioning
 # step: lhpc calls it with an in-root {root}/build/tool-cache/... dest and the link-gate asset path.
 #
-#   build-qemu.sh <destination> --link-gate <path-to-meshtastic-link-gate.sh>
+#   build-qemu.sh <destination> [--link-gate <path-to-meshtastic-link-gate.sh>]
+#
+# Without --link-gate it uses scripts/meshtastic-link-gate.sh, the controller's gate shipped here.
 #
 # WHY from source: the prebuilt Espressif tarball (fetch-qemu.sh) hard-links libSDL2; on a headless box
 # it cannot load, and satisfying libSDL2 drags in a ~35-package graphics/audio cascade. A source build
@@ -86,18 +88,17 @@ TAG="build-qemu"
 
 # ---- args -------------------------------------------------------------------------------------------
 DEST="${1:-}"
-[ -n "$DEST" ] || { echo "usage: build-qemu.sh <destination> --link-gate <path>" >&2; exit 2; }
+[ -n "$DEST" ] || { echo "usage: build-qemu.sh <destination> [--link-gate <path>]" >&2; exit 2; }
 shift
-LINK_GATE=""
+HERE="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+LINK_GATE="$HERE/meshtastic-link-gate.sh"
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--link-gate) LINK_GATE="${2:?--link-gate needs a path}"; shift 2 ;;
 		*) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
-[ -n "$LINK_GATE" ] || { echo "ERROR: --link-gate <path> is required" >&2; exit 2; }
 
-HERE="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib-publish.sh
 . "$HERE/lib-publish.sh"
 

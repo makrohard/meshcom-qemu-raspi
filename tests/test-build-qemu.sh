@@ -13,16 +13,16 @@
 # are satisfied with PATH stubs; the real strip/readelf/ldd/sha256sum/timeout/flock are used.
 #
 # EXIT CODES: 0 = all cases passed (prints ALL PASS) · 1 = a failure (prints FAILURES) · 77 = SKIPPED
-# (gcc or the LHPC link gate unavailable — e.g. a STANDALONE checkout with no sibling loraham-pi-control
-# and LHPC_LINK_GATE unset, which is EVERY standalone run). A CI runner MUST treat 77 as skip, NOT failure:
-# it is the honest signal that the suite did not run, deliberately distinct from a green exit 0.
+# (no gcc). A CI runner MUST treat 77 as skip, NOT failure: it is the honest signal that the suite did not
+# run, deliberately distinct from a green exit 0. The link gate is the one shipped in scripts/
+# (LHPC_LINK_GATE overrides it).
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD="$HERE/../scripts/build-qemu.sh"
 GATE_CANDIDATES=(
-	"$HERE/../../loraham-pi-control/lhpc/data/scripts/meshtastic-link-gate.sh"
 	"${LHPC_LINK_GATE:-}"
+	"$HERE/../scripts/meshtastic-link-gate.sh"
 )
 GATE=""
 for g in "${GATE_CANDIDATES[@]}"; do [ -n "$g" ] && [ -f "$g" ] && GATE="$g" && break; done
@@ -215,11 +215,13 @@ else bad "cleanup removed another dest's staging"; fi
 #     Each function runs in its OWN independent subshell (source lib + set state fresh): pub_die runs
 #     `exit`, so the first exit 4 would terminate a shared shell before the second call could run.
 d16="$work/brokensym"; mkdir -p "$d16"; ln -s /nonexistent-target-xyz "$d16/x"
+# shellcheck disable=SC2034  # PUB_* are read by the sourced lib-publish.sh
 (
 	unset LIB_PUBLISH_SOURCED; . "$HERE/../scripts/lib-publish.sh"
 	PUB_TAG="unit"; PUB_DEST="$d16/x"; PUB_PARENT="$d16"; PUB_BACKUP=""
 	pub_backup
 ) >/dev/null 2>&1; rc_b=$?
+# shellcheck disable=SC2034  # PUB_* are read by the sourced lib-publish.sh
 (
 	unset LIB_PUBLISH_SOURCED; . "$HERE/../scripts/lib-publish.sh"
 	PUB_TAG="unit"; PUB_DEST="$d16/x"; PUB_PARENT="$d16"
@@ -262,6 +264,20 @@ if grep -q "tag esp-develop-" "$src_note" 2>/dev/null && grep -q "(commit $COMMI
 		&& grep -q '0001-.*sha256=[0-9a-f]\{64\}' "$src_note"; then
 	pass "install ships a SOURCE note naming the tag, commit and patch"
 else bad "SOURCE note missing or incomplete"; fi
+
+# without --link-gate the shipped scripts/meshtastic-link-gate.sh gates the build: it passes a clean
+# binary, and a failing gate in its place refuses (so it is that file, not a skip)
+treeg="$work/treeg"; mkdir -p "$treeg"; cp -a "$HERE/../scripts" "$HERE/../patches" "$treeg/"
+dg="$work/defaultgate/x"
+LHPC_QEMU_FAKE_BUILD="$FAKE_GOOD" LHPC_QEMU_SMOKE_SECS=3 \
+	bash "$treeg/scripts/build-qemu.sh" "$dg" >"$work/out.log" 2>&1; rc=$?
+cp "$gatestub" "$treeg/scripts/meshtastic-link-gate.sh"
+dgf="$work/defaultgatefail/x"
+LHPC_QEMU_FAKE_BUILD="$FAKE_GOOD" LHPC_QEMU_SMOKE_SECS=3 \
+	bash "$treeg/scripts/build-qemu.sh" "$dgf" >"$work/out.log" 2>&1; rcf=$?
+if [ "$rc" -eq 0 ] && _valid "$dg" && [ "$rcf" -ne 0 ] && [ ! -f "$dgf/.lhpc-qemu-built" ]; then
+	pass "no --link-gate: the shipped gate passes a clean build (rc 0) and a failing one refuses (rc $rcf)"
+else bad "no --link-gate: shipped gate not used (rc $rc, failing-gate rc $rcf)"; tail -n 5 "$work/out.log" >&2; fi
 
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "FAILURES" >&2; fi
 exit "$fail"

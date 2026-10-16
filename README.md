@@ -8,7 +8,10 @@ firmware developers to boot MeshCom without hardware.
 
 ## Run
 Prerequisites: `git curl libslirp0`, PlatformIO (`pipx install platformio`), and a `qemu-system-xtensa`
-(`scripts/build-qemu.sh <dir> --link-gate <script>` builds the verified one; any on `PATH` is used otherwise).
+(`scripts/build-qemu.sh <dir>` builds the verified one; any on `PATH` is used otherwise).
+`scripts/meshtastic-link-gate.sh`, the gate that build checks the binary with, is a byte-identical copy of
+`lhpc/data/scripts/meshtastic-link-gate.sh` in [loraham-pi-control](https://github.com/makrohard/loraham-pi-control)
+at eb9673a4 (MIT, as this repository); `--link-gate <script>` uses another.
 ```bash
 scripts/setup.sh && scripts/apply-overlay.sh && scripts/prepare-openeth.sh && scripts/build.sh && scripts/run.sh
 ```

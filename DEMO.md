@@ -25,7 +25,7 @@ scripts/build.sh                 # the qemu-headless firmware and its flash imag
 scripts/run.sh                   # first start: one provisioning boot, then the node
 ```
 Needs `git`, `curl`, `libslirp0`, PlatformIO and a `qemu-system-xtensa` on `PATH` or passed as
-`scripts/run.sh --qemu <path>` (`scripts/build-qemu.sh <dir> --link-gate <script>` builds the validated
+`scripts/run.sh --qemu <path>` (`scripts/build-qemu.sh <dir>` builds the validated
 one into `<dir>/qemu/bin/`). Then set the node's callsign on the console: `--setcall <call>`.
 
 ## Uses for firmware work
