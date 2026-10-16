@@ -207,17 +207,25 @@ provision() {
 	grep -aq '\[CMD\] netmode -> Ethernet' "$log" || provision_fail "no acknowledgement of --netmode eth" "$log"
 }
 
+# console_reply CMD: one command on the net console, the reply on stdout (for a variable, never a file)
+console_reply() {
+	timeout 20 bash -c 'exec 3<>/dev/tcp/127.0.0.1/12323 || exit 1; sleep 2; printf "%s\r\n" "$1" >&3; timeout 8 cat <&3' _ "$1" 2>/dev/null || true
+}
 # verify_persisted LOG: the first supervised boot shows Ethernet mode and the console, then the console's
-# --info and the web page confirm the persisted settings. The --info reply is held in a variable only:
-# it carries a password field and is never written.
+# --info (and --pos for a *-gpsd env) and the web page confirm the persisted settings. The replies are held
+# in variables only: --info carries a password field, --pos the position; neither is written.
 verify_persisted() {
-	local log="$1" info code
+	local log="$1" info pos code
 	grep -aq '\[NET\] Ethernet mode' "$log" && grep -aq 'Console started on port 2323' "$log" || return 1
-	info="$(timeout 20 bash -c 'exec 3<>/dev/tcp/127.0.0.1/12323 || exit 1; sleep 2; printf "%s\r\n" "--info" >&3; timeout 8 cat <&3' 2>/dev/null || true)"
+	info="$(console_reply "--info")"
 	case "$info" in *"Console"*) ;; *) echo "[run] provisioning check: the console did not answer like MeshCom's (a console password?)" >&2; return 1 ;; esac
 	for t in 'NETWORK Mode:ETH' '...MESH off' '...EXTUDP off' 'Gateway off'; do
 		case "$info" in *"$t"*) ;; *) echo "[run] provisioning check: '--info' lacks '$t'" >&2; return 1 ;; esac
 	done
+	if [ "$GPS" = "1" ]; then
+		pos="$(console_reply "--pos")"
+		case "$pos" in *'...GPS: on'*) ;; *) echo "[run] provisioning check: '--pos' lacks '...GPS: on'" >&2; return 1 ;; esac
+	fi
 	code="$(timeout 15 bash -c 'exec 4<>/dev/tcp/127.0.0.1/18083 || exit 1; printf "GET / HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n" >&4; head -n 1 <&4' 2>/dev/null || true)"
 	case "$code" in *" 200"*) return 0 ;; *) echo "[run] provisioning check: web answered '${code%$'\r'}'" >&2; return 1 ;; esac
 }

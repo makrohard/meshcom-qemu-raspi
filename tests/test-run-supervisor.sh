@@ -82,7 +82,9 @@ def serve(port, handler):
 def console(c):
     c.sendall(b"OK\r\nMeshCom Console\r\nType --help for commands\r\n")
     try:
-        if b"--info" in c.recv(256): c.sendall(("--info\n" + info + "\n...PASSWD <secret>\n").encode())
+        req = c.recv(256)
+        if b"--info" in req: c.sendall(("--info\n" + info + "\n...PASSWD <secret>\n").encode())
+        if b"--pos" in req: c.sendall(("--pos\n...LAT: 48.0000 N\n" + os.environ.get("STUB_POS", "...GPS: on") + "\n").encode())
         time.sleep(0.2)
     finally: c.close()
 def web(c):
@@ -104,7 +106,9 @@ reset_case() {
 }
 start() { "$R/scripts/run.sh" --env "$ENV" --qemu "$T/qemu-stub" --node-image "$NODE" > "$T/run.out" 2>&1 & RP=$!; }
 wait_for() { local i; for i in $(seq 1 "$2"); do eval "$1" 2>/dev/null && return 0; sleep 0.5; done; return 1; }
-finish() { local i; for i in $(seq 1 "${1:-60}"); do kill -0 "$RP" 2>/dev/null || break; sleep 0.5; done; wait "$RP"; RC=$?; }
+# finish [N]: wait up to N/2 s for run.sh; one still running then is stopped and reported as rc 124
+finish() { local i; for i in $(seq 1 "${1:-60}"); do kill -0 "$RP" 2>/dev/null || break; sleep 0.5; done
+	if kill -0 "$RP" 2>/dev/null; then kill -TERM "$RP"; wait "$RP"; RC=124; else wait "$RP"; RC=$?; fi; }
 
 echo "== provisioning"
 reset_case prov-ok "boot inf"
@@ -136,6 +140,10 @@ reset_case prov-ok "boot inf ...NETWORK Mode:ETH ...MESH on ...EXTUDP off / Gate
 PROVISION_TIMEOUT=25 start; finish 80
 cp "$T/run.out" "$T/run-meshon.out"
 check "a persisted state with MESH on -> rc 3, no marker" '[ "$RC" = 3 ] && [ ! -e "$NODE.provisioned" ] && grep -qF "lacks '"'"'...MESH off'"'"'" "$T/run.out"'
+reset_case prov-ok "boot inf"
+STUB_POS="...GPS: off" PROVISION_TIMEOUT=25 start; finish 80
+check "a *-gpsd node whose --pos reads GPS: off -> rc 3, no marker" '[ "$RC" = 3 ] && [ ! -e "$NODE.provisioned" ] && grep -qF "lacks '"'"'...GPS: on'"'"'" "$T/run.out"'
+check "the --pos reply is never written (no position in any log)" '! grep -rq "LAT: 48" "$R/.run" "$T/run.out"'
 reset_case prov-hang
 start; wait_for 'grep -q "launch 0" "$STUB_LOG"' 20; sleep 1
 kill -TERM "$RP"; finish
