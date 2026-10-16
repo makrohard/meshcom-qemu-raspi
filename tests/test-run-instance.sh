@@ -10,7 +10,8 @@
 # tests/test-run-supervisor.sh (same ports, same stub name); boot-gates.yml runs them one after another.
 #
 # EXIT CODES: 0 = all cases passed (prints ALL PASS) · 1 = a failure (prints FAILURES).
-# shellcheck disable=SC2016
+# Each check is an eval'd string, so its variables look unexpanded/unused to shellcheck.
+# shellcheck disable=SC2016,SC2034
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
