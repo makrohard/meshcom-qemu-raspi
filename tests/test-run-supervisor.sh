@@ -29,7 +29,14 @@ head -c $((4 * 1024 * 1024)) /dev/zero > "$R/.work/MeshCom-Firmware/.pio/build/q
 ENV=qemu-headless-extradio-gpsd
 
 # The stub. Modes (one line of $STUB_PLAN per launch, consumed in order):
-#   prov-ok            provisioning: prints CLIENT STARTED, acknowledges --netmode eth, exits 0
+#   prov-ok            provisioning: prints CLIENT STARTED, echoes each command with its CR (run),
+#                      acknowledges --netmode eth, exits 0
+#   prov-fw PER [K]    the firmware's console on a slow guest: a command's text is echoed at once, its CR
+#                      PER s later, when it runs and is saved to $STUB_FLASH; --setssid/--setpwd arm a
+#                      self-reboot in 15·K s, --wifiap off and --netmode eth in 5·K s (each arming replaces
+#                      the last); the reboot exits rc 0. With STUB_ASYNC=1 a whole "[TX];refuse…" line is
+#                      printed inside each echo, after its fourth byte (the firmware's own lines can land
+#                      between two echoed bytes)
 #   prov-noack         provisioning: CLIENT STARTED, exits 0 without the acknowledgement
 #   prov-rc1           provisioning: CLIENT STARTED, exits 1
 #   prov-hang          provisioning: CLIENT STARTED, never ends
@@ -40,7 +47,7 @@ ENV=qemu-headless-extradio-gpsd
 #   exit1              QEMU fails at once (rc 1)
 cat > "$T/qemu-stub" <<'EOF'
 #!/usr/bin/env python3
-import os, signal, socket, sys, threading, time
+import os, select, signal, socket, sys, threading, time
 if sys.argv[1:2] == ["--version"]:
     print("QEMU emulator version 9.2.2"); sys.exit(0)
 plan, state = os.environ["STUB_PLAN"], os.environ["STUB_STATE"]
@@ -62,9 +69,34 @@ if m.startswith("prov"):
     if m == "prov-noack": time.sleep(1); sys.exit(0)
     if m == "prov-hang":
         while True: time.sleep(1)
+    if m == "prov-fw":
+        per, k = float(mode[1]), float(mode[2]) if len(mode) > 2 else 1.0
+        fd, buf, reboot = sys.stdin.fileno(), b"", None
+        def tick(until):
+            while time.time() < until:
+                if reboot is not None and time.time() >= reboot:
+                    note("selfreboot %d" % n); sys.exit(0)
+                time.sleep(0.05)
+        while True:
+            if b"\n" not in buf:
+                if select.select([fd], [], [], 0.05)[0]: buf += os.read(fd, 256)
+                tick(time.time() + 0.01); continue
+            line, buf = buf.split(b"\n", 1); c = line.strip().decode()
+            if not c: continue
+            if os.environ.get("STUB_ASYNC"):
+                sys.stdout.write(c[:4] + "[TX];refuse;unconfigured;ms;106058;refused;1\n" + c[4:])
+            else: sys.stdout.write(c)
+            sys.stdout.flush()
+            tick(time.time() + per)
+            reply = ""
+            if c in ("--setssid qemu0", "--setpwd qemu0000"): reply, reboot = "Auto. Reboot after 15 sec.", time.time() + 15 * k
+            elif c == "--wifiap off": reboot = time.time() + 5 * k
+            elif c == "--netmode eth": reply, reboot = "\n[CMD] netmode -> Ethernet", time.time() + 5 * k
+            with open(os.environ["STUB_FLASH"], "a") as f: f.write(c + "\n")
+            out("\r" + reply)
     got = []
     for raw in sys.stdin:
-        c = raw.strip(); got.append(c)
+        c = raw.strip(); got.append(c); out(c + "\r")
         if c == "--netmode eth":
             out("[CMD] netmode -> Ethernet")
             with open(os.environ["STUB_STDIN"], "w") as f: f.write("\n".join(got) + "\n")
@@ -101,12 +133,12 @@ while time.time() - t0 < secs: time.sleep(0.2)
 note("reset %d" % n); sys.exit(0)
 EOF
 chmod +x "$T/qemu-stub"
-export STUB_PLAN="$T/plan" STUB_STATE="$T/state" STUB_LOG="$T/stub.log" STUB_STDIN="$T/stdin"
+export STUB_PLAN="$T/plan" STUB_STATE="$T/state" STUB_LOG="$T/stub.log" STUB_STDIN="$T/stdin" STUB_FLASH="$T/flash"
 export FAST_RUN_S=2 RESTART_BUDGET=4 PROVISION_TIMEOUT=30
 NODE="$T/node/node-flash.bin"
 reset_case() {
 	pkill -f "[q]emu-stub" 2>/dev/null || true
-	rm -rf "$R/.run" "$T/node" "$STUB_STATE" "$STUB_LOG" "$STUB_STDIN"; printf '%s\n' "$@" > "$STUB_PLAN"
+	rm -rf "$R/.run" "$T/node" "$STUB_STATE" "$STUB_LOG" "$STUB_STDIN" "$STUB_FLASH"; printf '%s\n' "$@" > "$STUB_PLAN"
 }
 start() { "$R/scripts/run.sh" --env "$ENV" --qemu "$T/qemu-stub" --node-image "$NODE" > "$T/run.out" 2>&1 & RP=$!; }
 wait_for() { local i; for i in $(seq 1 "$2"); do eval "$1" 2>/dev/null && return 0; sleep 0.5; done; return 1; }
@@ -115,12 +147,16 @@ finish() { local i; for i in $(seq 1 "${1:-60}"); do kill -0 "$RP" 2>/dev/null |
 	if kill -0 "$RP" 2>/dev/null; then kill -TERM "$RP"; wait "$RP"; RC=124; else wait "$RP"; RC=$?; fi; }
 
 echo "== provisioning"
+# run.sh's PROVISION_CMDS for a *-gpsd env, in their order (the marker's sha is over this list)
+CANON=("--setssid qemu0" "--setpwd qemu0000" "--webserver on" "--netconsole on" "--mesh off" "--gateway off" "--extudp off" "--gps on" "--wifiap off" "--netmode eth")
+canon_sha() { printf '%s\n' "${CANON[@]}" | sha256sum | cut -d' ' -f1; }
 reset_case prov-ok "boot inf"
 start
 wait_for 'grep -q "provisioning verified" "$T/run.out"' 40
 check "a fresh node is provisioned, verified and the marker written" '[ -s "$NODE.provisioned" ]'
-check "the commands reach UART0 in order, --netmode eth last" '[ "$(tail -1 "$STUB_STDIN")" = "--netmode eth" ] && grep -qx -- "--mesh off" "$STUB_STDIN" && grep -qx -- "--gps on" "$STUB_STDIN"'
-check "the marker names the command list's sha256" '[ "$(cut -d" " -f2 "$NODE.provisioned")" = "$(sed "/^$/d" "$STUB_STDIN" | sha256sum | cut -d" " -f1)" ]'
+check "every command reaches UART0 once, the self-reboot ones last, --netmode eth at the end" \
+	'[ "$(sed "/^$/d" "$STUB_STDIN" | sort)" = "$(printf "%s\n" "${CANON[@]}" | sort)" ] && [ "$(sed "/^$/d" "$STUB_STDIN" | tail -4 | tr "\n" "|")" = "--setssid qemu0|--setpwd qemu0000|--wifiap off|--netmode eth|" ]'
+check "the marker names the command list's sha256 (the settings, not the send order)" '[ "$(cut -d" " -f2 "$NODE.provisioned")" = "$(canon_sha)" ]'
 check "the --info reply is never written (no password field in any log)" '! grep -rq "PASSWD" "$R/.run" "$T/run.out"'
 check "uart-latest.log points at the supervised boot" '[ "$(readlink "$R/.run/uart-latest.log")" != "" ] && ! readlink "$R/.run/uart-latest.log" | grep -q provision'
 "$R/scripts/stop.sh" > "$T/stop.out"; finish
@@ -132,6 +168,24 @@ check "a second start with the marker does not provision again" '! grep -q "prov
 echo "stamp other" > "$NODE.provisioned"; printf '%s\n' prov-ok "boot inf" > "$STUB_PLAN"; rm -f "$STUB_STATE"
 start; wait_for 'grep -q "provisioning verified" "$T/run.out"' 40
 check "a marker for another command list provisions again" 'grep -q "provisioning the node" "$T/run.out"'
+"$R/scripts/stop.sh" >/dev/null; finish
+
+echo "== provisioning on a slow guest (the Zero 2 W: the console is read slower than one line per second)"
+reset_case "prov-fw 2.5" "boot inf"
+PROVISION_TIMEOUT=120 start; wait_for 'grep -q "provisioning verified" "$T/run.out"' 150
+check "one command per 2.5 s, self-reboot 15 s after --setssid: provisioned in one boot, the marker written" \
+	'[ -s "$NODE.provisioned" ] && [ "$(grep -c "prov-fw" "$STUB_LOG")" = 1 ] && [ "$(sort "$STUB_FLASH")" = "$(printf "%s\n" "${CANON[@]}" | sort)" ]'
+"$R/scripts/stop.sh" >/dev/null; finish
+reset_case "prov-fw 3 0.5" "prov-fw 3 0.5" "boot inf"
+PROVISION_TIMEOUT=120 start; wait_for 'grep -q "provisioning verified" "$T/run.out"' 150
+check "a self-reboot before the last command: booted again, the rest sent, every setting saved once" \
+	'[ -s "$NODE.provisioned" ] && [ "$(grep -c "prov-fw" "$STUB_LOG")" = 2 ] && grep -q "rebooted itself before --netmode eth" "$T/run.out" && [ "$(sort "$STUB_FLASH")" = "$(printf "%s\n" "${CANON[@]}" | sort)" ]'
+"$R/scripts/stop.sh" >/dev/null; finish
+
+reset_case "prov-fw 0.3" "boot inf"
+STUB_ASYNC=1 PROVISION_TIMEOUT=60 start; wait_for 'grep -q "provisioning verified" "$T/run.out"' 80
+check "a firmware line printed inside a command's echo does not hide that the command ran" \
+	'[ -s "$NODE.provisioned" ] && [ "$(grep -c "prov-fw" "$STUB_LOG")" = 1 ] && grep -aq -- "--me\[TX\];refuse" "$R"/.run/uart-provision-*.log'
 "$R/scripts/stop.sh" >/dev/null; finish
 
 for c in "prov-noack|no acknowledgement" "prov-rc1|QEMU exited rc=1" "prov-hang|timeout waiting"; do

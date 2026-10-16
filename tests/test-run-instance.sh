@@ -42,6 +42,7 @@ def out(s): sys.stdout.write(s + "\n"); sys.stdout.flush()
 if first:
     out("CLIENT STARTED")
     for raw in sys.stdin:
+        out(raw.strip() + "\r")                # the firmware echoes each command and its CR on UART0
         if raw.strip() == "--netmode eth":
             out("[CMD] netmode -> Ethernet"); time.sleep(0.3); sys.exit(0)
     sys.exit(0)

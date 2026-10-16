@@ -46,6 +46,8 @@ scripts/setup.sh && scripts/apply-overlay.sh && scripts/prepare-openeth.sh && sc
   and sends MeshCom's own console commands over UART0: placeholder Wi-Fi credentials (stock code turns the
   web server off without them; Ethernet mode never uses them), `--webserver on`, `--netconsole on`,
   `--mesh off`, `--gateway off`, `--extudp off`, `--gps on` (`*-gpsd`), `--wifiap off`, `--netmode eth`.
+  Each waits for its echo; the ones that arm the firmware's self-reboot go last, and a self-reboot before
+  the list is done (a slow guest such as the Zero 2 W) boots it again to send the rest.
   The marker is written only after the next boot's `--info` shows Ethernet mode with mesh, extudp and gateway
   off and the web page answers; otherwise exit 3. Then set the node's callsign: `--setcall <call>` on the
   console (LoRaHAM Pi Control sends it after each start). Until a callsign is set, MeshCom forces its AP flag

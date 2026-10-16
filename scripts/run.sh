@@ -211,29 +211,70 @@ PROVISION_CMDS=("--setssid qemu0" "--setpwd qemu0000" "--webserver on" "--netcon
 [ "$GPS" = "1" ] && PROVISION_CMDS+=("--gps on")
 PROVISION_CMDS+=("--wifiap off" "--netmode eth")
 PROVISION_SHA="$(printf '%s\n' "${PROVISION_CMDS[@]}" | sha256sum | cut -d' ' -f1)"
+# The send order: the commands that (re)arm the firmware's self-reboot (--setssid/--setpwd 15 s, --wifiap
+# 5 s) last, --netmode eth (5 s) at the very end, so on a slow guest the timer cannot cut the list short.
+# The marker's sha stays over PROVISION_CMDS (the settings), not over this order.
+PROVISION_SEND=()
+for c in "${PROVISION_CMDS[@]}"; do case "$c" in --setssid*|--setpwd*|--wifiap*|--netmode*) ;; *) PROVISION_SEND+=("$c") ;; esac; done
+for c in "${PROVISION_CMDS[@]}"; do case "$c" in --setssid*|--setpwd*|--wifiap*) PROVISION_SEND+=("$c") ;; esac; done
+PROVISION_SEND+=("--netmode eth")
 PROVISION_TIMEOUT="${PROVISION_TIMEOUT:-900}"
 DEADLINE=0
 provision_fail() { echo "[run] provisioning FAILED: $1 (log: $2)" >&2; stop_qemu; exit 3; }
 
-provision() {
-	local log fifo="$RUN/uart0.in" c
-	log="$RUN/uart-provision-$(date -u +%Y%m%dT%H%M%SZ).log"
-	DEADLINE=$(( $(date +%s) + PROVISION_TIMEOUT ))
-	echo "[run] provisioning the node (log $log)"
+# provision_boot LOG: QEMU on a fresh FIFO (no bytes left from a guest that ended), until the firmware's
+# console is up in THIS boot.
+provision_boot() {
+	local fifo="$RUN/uart0.in" from
+	exec 7>&-
 	rm -f "$fifo"; mkfifo -m 600 "$fifo"; exec 7<>"$fifo"; rm -f "$fifo"
-	launch "$log" 7
-	until grep -aq 'CLIENT STARTED' "$log"; do
-		qemu_alive || provision_fail "QEMU ended before the firmware started" "$log"
-		[ "$(date +%s)" -lt "$DEADLINE" ] || provision_fail "timeout before the firmware started" "$log"
+	from=$(stat -c %s "$1"); launch "$1" 7
+	until tail -c +"$((from + 1))" "$1" | grep -aq 'CLIENT STARTED'; do
+		qemu_alive || provision_fail "QEMU ended before the firmware started" "$1"
+		[ "$(date +%s)" -lt "$DEADLINE" ] || provision_fail "timeout before the firmware started" "$1"
 		sleep 1
 	done
 	sleep 3
-	for c in "${PROVISION_CMDS[@]}"; do printf '%s\r\n' "$c" >&7; sleep 1; done
+}
+
+# command_ran LOG FROM CMD: "CMD\r" in LOG after byte FROM, once the firmware's own whole "[TAG]...\n" lines
+# are taken out: they are printed between two loop passes and so can land inside a command's echo.
+command_ran() {
+	tail -c +"$(($2 + 1))" "$1" | sed -z 's/\[[A-Z][A-Za-z0-9 _]*\][^\n]*\n//g' | grep -aqF -- "$3"$'\r'
+}
+
+# provision: each command waits for its echoed CR before the next is sent (a slow guest reads its console
+# slower than one line per second). The firmware echoes one byte per loop pass: "<command>\r" on UART0
+# proves the terminator was consumed; the firmware executes that line later in the same loop pass, before
+# it can read the next command. Every command is saved at once, so a self-reboot after at least one
+# consumed command boots the guest again and the list goes on.
+provision() {
+	local log c i=0 from rc progress=0
+	log="$RUN/uart-provision-$(date -u +%Y%m%dT%H%M%SZ).log"; : > "$log"
+	DEADLINE=$(( $(date +%s) + PROVISION_TIMEOUT ))
+	echo "[run] provisioning the node (log $log)"
+	provision_boot "$log"
+	while [ "$i" -lt "${#PROVISION_SEND[@]}" ]; do
+		c="${PROVISION_SEND[$i]}"
+		from=$(stat -c %s "$log")
+		qemu_alive && printf '%s\r\n' "$c" >&7
+		until command_ran "$log" "$from" "$c"; do
+			qemu_alive || break
+			[ "$(date +%s)" -lt "$DEADLINE" ] || provision_fail "timeout waiting for the firmware to run $c" "$log"
+			sleep 0.2
+		done
+		if command_ran "$log" "$from" "$c"; then i=$((i + 1)); progress=1; continue; fi
+		rc=0; wait_rc || rc=$?
+		[ "$rc" = 0 ] || provision_fail "QEMU exited rc=$rc" "$log"
+		[ "$progress" = 1 ] || provision_fail "no acknowledgement of $c before the guest ended" "$log"
+		echo "[run] the firmware rebooted itself before $c; booting again to go on"
+		progress=0; provision_boot "$log"
+	done
 	while qemu_alive; do
 		[ "$(date +%s)" -lt "$DEADLINE" ] || provision_fail "timeout waiting for the firmware's reboot" "$log"
 		sleep 1
 	done
-	local rc=0; wait_rc || rc=$?
+	rc=0; wait_rc || rc=$?
 	exec 7>&-
 	[ "$rc" = 0 ] || provision_fail "QEMU exited rc=$rc" "$log"
 	grep -aq '\[CMD\] netmode -> Ethernet' "$log" || provision_fail "no acknowledgement of --netmode eth" "$log"
