@@ -1,7 +1,7 @@
 # Synthetic GPS NMEA fixtures
 
-These files are **synthetic test vectors** for the QEMU GPS fixture tests
-(`scripts/test-gps.sh`, fed via `scripts/gps-relay.py --mode fixture`). They contain
+These files are **synthetic test vectors** for the QEMU GPS path (`tests/test-boot-gates.sh` feeds
+`valid_fix.nmea` via `scripts/gps-relay.py --mode fixture`; the others are for manual runs). They contain
 **deliberately fictional coordinates** — a round point at **48°00.0000′N 012°00.0000′E**
 — and are **not** captured from any real receiver. No live position is stored here.
 

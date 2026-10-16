@@ -16,8 +16,8 @@ TX/RX against a physical T-Deck, via the bridge and daemon.
 
 | Component | Local path | Repo |
 |---|---|---|
-| QEMU overlay (this) | `meshcom-qemu-raspi` | https://github.com/makrohard/meshcom-qemu-raspi |
-| MeshCom firmware (XR branch) | `MeshCom-Firmware` @ `feature/external-radio-tcp-draft` | https://github.com/makrohard/MeshCom-Firmware/tree/feature/external-radio-tcp-draft · upstream https://github.com/icssw-org/MeshCom-Firmware |
+| QEMU runner (this) | `meshcom-qemu-raspi` | https://github.com/makrohard/meshcom-qemu-raspi |
+| MeshCom firmware | fetched by `scripts/setup.sh` into `.work/` at the pinned commit (`DEFAULT_REF`) | https://github.com/icssw-org/MeshCom-Firmware (the external radio is upstream since PR #1072) |
 | Bridge | `meshcom-loraham-bridge` | https://github.com/makrohard/meshcom-loraham-bridge |
 | LoRaHAM daemon (v111) | `loraham-daemon-hardening/loraham_daemon` | https://github.com/LoRaHAM/LoRaHAM_Daemon (branch `hardening/daemon-tests`, PR #8) |
 
@@ -38,7 +38,7 @@ GPS-only target with a synthetic fix. No daemon, bridge, gpsd, or radio needed.
 
 ```bash
 cd ~/src/meshcom-qemu-raspi
-scripts/setup.sh --src ~/src/MeshCom-Firmware --ref feature/external-radio-tcp-draft
+scripts/setup.sh
 scripts/apply-overlay.sh
 scripts/prepare-openeth.sh
 scripts/build.sh --env qemu-headless-gpsd
@@ -52,9 +52,8 @@ python3 scripts/gps-relay.py --mode fixture \
 scripts/run.sh --env qemu-headless-gpsd
 ```
 
-Open **http://127.0.0.1:18083/** (net-console on `127.0.0.1:12323`). Stop with
-`scripts/stop.sh`. The automated fixture suite (`scripts/test-gps.sh --env qemu-headless-gpsd`)
-handles the relay/node ordering itself.
+A first start provisions the node and restarts it once (README, *Provisioning*). Open
+**http://127.0.0.1:18083/** (net-console on `127.0.0.1:12323`). Stop with `scripts/stop.sh`.
 
 ---
 
@@ -76,7 +75,7 @@ printf '%s' "$(openssl rand -hex 16)" > /tmp/xr_pw
 ```bash
 # 3) Build the GPS + external-radio firmware, bound to the bridge endpoint + secret
 cd ~/src/meshcom-qemu-raspi
-scripts/setup.sh --src ~/src/MeshCom-Firmware --ref feature/external-radio-tcp-draft
+scripts/setup.sh
 scripts/apply-overlay.sh
 scripts/prepare-openeth.sh
 XR_HOST=10.0.2.2 XR_PORT=7000 XR_PASSWORD="$(cat /tmp/xr_pw)" \
@@ -141,7 +140,8 @@ Settings are stored in flash (NVS) and **survive restarts and rebuilds**: `run.s
 image (`.state/node-flash.bin`, or `--node-image <path>`), not on the build output, and carries the node's
 NVS into a new build when its partition table is unchanged (`scripts/node-image.sh`). A build with a
 different partition table starts from defaults, and says so. The node's MAC, and with it its MeshCom node ID, is
-`<node image>.efuse` (created once, `scripts/node-efuse.sh`). Delete both to reset the node.
+`<node image>.efuse` (created once, `scripts/node-efuse.sh`). Delete the image, its `.efuse` and its
+`.provisioned` marker to reset the node.
 
 > The web UI's **Save** does not round-trip under QEMU: the value usually *is* applied
 > and saved server-side, but the page can't show it (the HTTP response is lost under
