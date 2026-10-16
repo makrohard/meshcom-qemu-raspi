@@ -1,4 +1,18 @@
-# Code report s5 (A2) v3: stock MeshCom in QEMU, our files only
+# Code report s5 (A2) v4: stock MeshCom in QEMU, our files only
+
+**v4 delta** (gate 2, Work round W2: RED, six findings; all fixed in fe9b051a):
+
+| finding | v3 | v4 |
+|---|---|---|
+| F1 kill escalation | stop.sh `stop_pid` and run.sh `stop_qemu` sent SIGKILL to the bare PID after the grace wait | SIGKILL only while the PID is still the checked process: the same start time (`/proc/PID/stat` field 22) and the same predicate (stop.sh: `is_runner`/`is_qemu`; run.sh: its own monitor socket in the argv); otherwise "not killed". Tests: a runner that drops run.lock and becomes another program during stop.sh's wait survives; a guest whose TERM turns it into another program survives run.sh's stop. Red-before: both FAIL on d1b73c84 (it was killed) |
+| F2 stale marker | a marker for another command list stayed during provisioning; a failure or TERM left it | removed before provisioning starts. Tests: an existing image with another list's marker, then a provisioning failure (rc 3) and a TERM (rc 0): no marker. Red-before: both FAIL on d1b73c84 |
+| F3 controls passing on a failed fixture | readiness and console reads were not checked; a failed read satisfied a negative assertion | `setup()`: a control is judged only after its preparation held, otherwise FAIL. Readiness for every control node; g: baseline MESH off, then `--info` reads MESH on; d: `--pos` answered with a SAT line; f: restart #1 + web 200, then `--info` reads MTU 1500; e: the runner still runs after `--reboot`; c: web 200 with the console off; a and slow l: the history extraction (and apply/build); b: build rc 0, run.sh rc 3; slow b′/k/k2: their builds; b′ control: the build log names ETHClass2.h; l control: web fails with the link down |
+| F4 gate i without load | the writer's exit ignored; probes could run past the 90 s load | `uart_load`: writer rc 0, bytes > 0, the writer still running after the last probe (8 probes, 8 s apart), 8 answers. New control i: a failed writer (no such socket) → the gate's assertion fails |
+| F5 k2 not fresh | a copy of the provisioned image minus its marker | an absent image: node-image.sh creates it from the test build ("created from the build" asserted) |
+| F6 shallow checkout | `actions/checkout` depth 1; the controls read c2335d12 | `fetch-depth: 0`; a missing historical file is a setup FAIL. First arm dispatch: not possible before the merge (GitHub: "workflow boot-gates.yml not found on the default branch", HTTP 404 on the dispatch at fe9b051a); it runs as the first dispatch after the merge |
+| README | "aarch64: not yet run" | the Pi 5 `--main` result; README 103 lines |
+| b/k/l wording | the plan said web 200 within 30 s | the plan now says what the code does: reported again within 30 s, then web 200 within a further 60 s |
+
 
 **v3 delta** (gate 1, auditor 2b round 1: two findings):
 
@@ -38,8 +52,15 @@ All runs on an x86_64 Linux host (Fedora 43), MeshCom f2b3a349, QEMU esp-develop
 | 6f5531f0 | the persisted-state check requires `--gps on` for `*-gpsd` (via `--pos`); test finish() bounded | quick: GPS off → rc 3, no marker; position never written | the new test on the parent's run.sh: 1 FAIL |
 | 386c056b | report and packet v2 | — | — |
 | b486e34a | stop.sh signals a QEMU only with this checkout's monitor socket | quick: a QEMU-like decoy with another monitor socket survives stop.sh | the new case on the parent's stop.sh: 1 FAIL (the decoy was signalled) |
+| fe9b051a | gate-2 findings F1–F6 (v4 delta above) | quick: 4 new supervisor cases; slow: setup() for every control, gate i via uart_load, control i, k2 from an absent image | the supervisor file on d1b73c84's scripts: 4 FAIL |
 
-## Evidence of record (HEAD 6e49bcb1)
+## Evidence of record, v4 (fe9b051a, 2026-10-16)
+- x86: `--main` 21/21 (357 s); `--controls` 8/8 with every setup held (283 s); `--slow-k2 --slow-l` 2/2 (82 s); `--slow-b` 2/2; `--slow-k` 2/2 (574 s).
+- Pi 5 aarch64: `--main` 21/21 (04:23–04:36Z) on the v4 working tree before its controls-only edits (F3, the f evidence). Compared with fe9b051a: run.sh, stop.sh, node-image.sh, node-efuse.sh byte-identical; test-boot-gates.sh's `--main` section identical; the only other difference before it is the `setup()` helper, which `--main` does not call. Gate i: writer rc 0, 52992 B, all 8 probes inside the load (x86: the same figures). First start: provisioning + check 73 s. Heat 47.2–60.4 °C, `throttled=0x0`.
+- Quick: test-run-supervisor 33/33; test-apply-overlay, test-node-image, test-node-efuse, test-setup-src pass; shellcheck `-S warning` clean on the CI file list.
+- Red-before (the v4 test file against d1b73c84's scripts): 4 FAIL (the two F2 cases, the two F1 cases), 29 ok.
+
+## Evidence of record, v1-v3 (HEAD 6e49bcb1)
 - `--main` 21/21 as expected (392 s): a, j, b ×2, c, c-xr ×2, d, f, g, h, i, e, l ×3.
 - `--controls --slow-l --slow-k2` 9/9 (390 s): controls a b c d e f g l, k2.
 - `--slow-b` 2/2 (333 s), `--slow-k` 2/2 (574 s).
@@ -56,11 +77,12 @@ All runs on an x86_64 Linux host (Fedora 43), MeshCom f2b3a349, QEMU esp-develop
 | c-xr | the 45 s window before `--sendpos`: no 0x21 frame (`0x40` frames and PING/PONG only) |
 | d | relay off → `--pos` shows no fix |
 | e | run.sh without `-no-reboot` → no restart line within 60 s |
-| f | `--mtu 1500` → no `[NET];mtu;eth;1280` line (upstream prints it only on a change; lwIP's default is 1500) |
+| f | `--mtu 1500` → no `[NET];mtu;eth;1280` line (upstream prints it only on a change; lwIP's default is 1500); v4: `--info` reads MTU 1500 first |
 | g | `--mesh on` → `--info` reads `MESH on` |
 | k | none natural (see "Found"); k2: a fresh node in that build → rc 3 |
 | l | the old `qemu_network.cpp` → no withdrawal within 12 s |
-| h, i | none natural (stated in the plan) |
+| i | v4: a failed writer → the assertion fails |
+| h | none natural (stated in the plan) |
 
 ## Found by the gates, fixed in this branch
 1. **Static fallback with the link down** (fa858d68). After `set_link off`, `qemuNetworkReady()` applied the 8 s static address and reported the node ready while the link was down; after the reconnect it raced DHCP. Red-before: gate l's recovery step failed with that UART sequence.
@@ -87,14 +109,14 @@ Harness defects found and fixed while writing the tests: a field index in gate b
 - Heat: 47.2–60.9 °C, `throttled=0x0` throughout. Exit state: the scratch directory removed, the box's meshcom stack stopped as found.
 
 ## Controller integration
-- First start on aarch64 (Pi 5) 53 s, on x86 46 s, against the controller's readiness timeout of 600 s for meshcom-qemu: no alignment needed on the Pi 5 and x86. The Pi Zero 2W (the slowest box) is measured in the 0.12.10 live row. `PROVISION_TIMEOUT` (900 s) still exceeds the controller's 600 s.
+- First start on aarch64 (Pi 5) 53 s (v4 run: 73 s), on x86 46 s, against the controller's readiness timeout of 600 s for meshcom-qemu: no alignment needed on the Pi 5 and x86. The Pi Zero 2W (the slowest box) is measured in the 0.12.10 live row. `PROVISION_TIMEOUT` (900 s) still exceeds the controller's 600 s.
 
 ## Residual risks
 - **Torn read (with R5):** the hand-over task writes `node_ip`/`node_gw`/`node_subnet` from its own task while the main loop may read them for a display or a web page; a page could show a half-written address during a re-report. Cosmetic: no decision path reads these strings; no synchronisation is added.
 
 ## Not covered yet
 - aarch64 slow modes (b′, k, k2, l control) and the lhpc-binaries smoke on the candidate controller commit (the pin-move qualification).
-- The weekly workflow has never run (the branch was not pushed before this report).
+- The weekly workflow has never run: GitHub dispatches a workflow only from the default branch, so its first arm run is the first dispatch after the merge.
 - The loraham backend with RX into the node, a live gpsd feed, the controller's post-step window on a Pi: the 0.12.10 live row.
 - The other three envs are built, not booted.
 
@@ -125,7 +147,8 @@ The checker is built for the controller repository. Here: no CHANGELOG exists (N
    - stop.sh signals only this checkout's runner (the process holding `.run/run.lock`) and this checkout's guest (a qemu-system-xtensa with an MTD node image and `unix:$RUN/monitor.sock`); a reused pid, including another runner's QEMU, is not signalled (test-run-supervisor, two decoys);
    - provisioning only with verified persisted state (supervisor tests "MESH on → 3" and "GPS off → 3", gate j).
 3. **Failure classes:**
-   - a signal during provisioning; a guest ignoring TERM (KILL after 10 s);
+   - a signal during provisioning; a guest ignoring TERM (KILL after 10 s, only while it is still that guest);
+   - a PID that becomes another program during a grace wait (not killed, v4); a marker for another list during a failed or stopped provisioning (removed, v4);
    - a reused pid (a plain process, and another runner's QEMU), a second runner, a stale `uart-latest.log`, a changed command list, rc 0 without the ack, a provisioning timeout (all in test-run-supervisor);
    - a driver that never starts (gate k); a link loss (gate l); an unpaced UART (gate i).
    - The stubs model a process lifetime (TERM notes, ports served while alive).
@@ -136,15 +159,16 @@ The checker is built for the controller repository. Here: no CHANGELOG exists (N
 ## Numbers, measured
 | figure | command | output |
 |---|---|---|
-| diff | `git diff --stat origin/main..HEAD \| tail -1` | 27 files, +1435/−1058 |
+| diff | `git diff --stat c2335d12..fe9b051a \| tail -1` (code-review/ included) | 31 files, +5187/−1058 |
+| v4 diff | `git diff --stat d1b73c84..fe9b051a \| tail -1` | 7 files, +181/−64 |
 | removed patch | `git show origin/main:overlay/patches/meshcom-qemu-headless.patch \| wc -l` | 469 |
-| run.sh before/after | `wc -l` at origin/main / HEAD | 137 / 267 |
-| stop.sh before/after | same | 25 / 41 |
+| run.sh before/after | `wc -l` at c2335d12 / fe9b051a | 137 / 295 |
+| stop.sh before/after | same | 25 / 60 |
 | apply-overlay.sh before/after | same | 82 / 35 |
 | new C++ | `wc -l overlay/src/qemu/qemu_ethmode.cpp qemu_eth_standin.cpp` | 104, 35 |
 | stand-in headers | `wc -l ETHClass2.h EthernetUdp.h` | 29, 9 |
-| tests | `wc -l tests/test-run-supervisor.sh tests/test-boot-gates.sh tests/xr-tap.py` | 196, 282, 39 |
-| README | `wc -l README.md` | 102 |
-| gate results | `grep -cE '^PASS'` in the four final outputs | 21, 9, 2, 2 |
-| quick results | test outputs | 4, 25, 29 ok |
+| tests | `wc -l tests/test-run-supervisor.sh tests/test-boot-gates.sh tests/xr-tap.py` at fe9b051a | 244, 333, 39 |
+| README | `wc -l README.md` at fe9b051a | 103 |
+| gate results v4 | `grep -cE '^PASS'`: x86 main, controls, k2+l, b, k; Pi 5 main | 21, 8, 2, 2, 2; 21 |
+| quick results v4 | test-run-supervisor `ok` lines | 33 |
 | tracked MeshCom changes | gate a | 0 |
