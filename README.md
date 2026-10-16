@@ -98,5 +98,6 @@ validated against MeshCom f2b3a3496a76f327abec8b7228bce436cafe9606 on 2026-10-16
   tests/test-boot-gates.sh --main --controls --slow, all as expected; PlatformIO 6.1.19;
   framework-arduinoespressif32 3.20017.241212 (Arduino-ESP32 2.0.17, ESP-IDF 4.4.7);
   QEMU esp-develop-9.2.2-20260417 + patches/qemu (scripts/build-qemu.sh)
-aarch64: not yet run with this layout
+validated against the same commit on 2026-10-16, aarch64 Raspberry Pi 5:
+  tests/test-boot-gates.sh --main, all as expected (--controls and --slow: x86 only so far)
 ```

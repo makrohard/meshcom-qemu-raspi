@@ -28,6 +28,8 @@ jobs:
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the controls read c2335d12's files (tests/test-boot-gates.sh); a missing one is a FAIL
       - name: Packages
         run: |
           sudo apt-get update -q

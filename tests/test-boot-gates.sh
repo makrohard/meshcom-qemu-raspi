@@ -28,6 +28,9 @@ FAILS=0
 pass() { echo "PASS  $1"; }
 fail() { echo "FAIL  $1"; FAILS=$((FAILS+1)); }
 gate() { if eval "$2" 2>/dev/null; then pass "$1"; else fail "$1"; fi; }
+# setup NAME CHECK: a control's preparation; when it does not hold, that is a FAIL and the control is not
+# judged (a control must never pass because its fixture failed). Returns CHECK's result.
+setup() { if eval "$2" 2>/dev/null; then return 0; fi; fail "setup $1"; return 1; }
 # expect_fail: a control passes when the gate's assertion is FALSE on it.
 control() { if eval "$2" 2>/dev/null; then fail "control $1 (the assertion still held)"; else pass "control $1 (the assertion failed, as it must)"; fi; }
 MODES=" $* "; [ -z "${*:-}" ] && MODES=" --main "
@@ -96,6 +99,27 @@ ready_with_address() { local p r; p=$(grep -aoE 'ethmode: IP .* reported \([0-9]
 # order L1 L2 FILE: line L1 occurs before L2
 order() { local a b; a=$(grep -anm1 -- "$1" "$3" | cut -d: -f1); b=$(grep -anm1 -- "$2" "$3" | cut -d: -f1); [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; }
 
+# uart_load SOCK: write the NMEA fixture to SOCK unpaced for 90 s while 8 probes (web 200 + console banner)
+# run. Sets bl_rc (the writer's exit), bl_bytes (bytes written), inload (1 = the writer still ran after the
+# last probe, so every probe fell inside the load) and iok (probes answered). uart_load_held is gate i.
+uart_load() {
+	python3 -I - "$1" "$ROOT/fixtures/gps/valid_fix.nmea" > "$G/blast.txt" 2>&1 <<'PY' &
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.settimeout(5); data = open(sys.argv[2], "rb").read()
+t0 = time.time(); n = 0
+while time.time() - t0 < 90:
+    try: s.sendall(data); n += len(data)
+    except socket.timeout: pass
+print("bytes %d secs %.1f" % (n, time.time() - t0))
+PY
+	local bl=$! k; iok=0; inload=0
+	for k in 1 2 3 4 5 6 7 8; do sleep 8; [ "$(web / 15)" = 200 ] && console_ok && iok=$((iok+1)); done
+	kill -0 "$bl" 2>/dev/null && inload=1
+	bl_rc=0; wait "$bl" || bl_rc=$?
+	bl_bytes="$(grep -oE '^bytes [0-9]+' "$G/blast.txt" | grep -oE '[0-9]+' || echo 0)"
+}
+uart_load_held() { [ "$bl_rc" = 0 ] && [ "${bl_bytes:-0}" -gt 0 ] && [ "$inload" = 1 ] && [ "$iok" = 8 ]; }
+
 if [[ "$MODES" == *" --main "* ]]; then
 	echo "== builds (a)"
 	"$ROOT/scripts/apply-overlay.sh" > "$G/apply.log" 2>&1; arc=$?
@@ -140,19 +164,9 @@ if [[ "$MODES" == *" --main "* ]]; then
 	waitfor '[ "$(web)" = 200 ]' 30; hweb=$?
 	gate "h  spectrum page within 60 s, then web 200" '[ "$scode" = 200 ] && [ "$st" -le 60 ] && [ "$hweb" = 0 ]'
 	kill "$GP" 2>/dev/null; GP=""
-	python3 -I - "$ROOT/.run/gps-uart1.sock" "$ROOT/fixtures/gps/valid_fix.nmea" > "$G/blast.txt" 2>&1 <<'PY' &
-import socket, sys, time
-s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.settimeout(5); data = open(sys.argv[2], "rb").read()
-t0 = time.time(); n = 0
-while time.time() - t0 < 90:
-    try: s.sendall(data); n += len(data)
-    except socket.timeout: pass
-print("bytes %d secs %.1f" % (n, time.time() - t0))
-PY
-	BL=$!; iok=0
-	for k in 1 2 3 4 5 6 7 8; do sleep 10; [ "$(web / 15)" = 200 ] && console_ok && iok=$((iok+1)); done
-	wait "$BL"
-	gate "i  UART1 written unpaced for 90 s: web and console answer at all 8 probes" '[ "$iok" = 8 ]'
+	uart_load "$ROOT/.run/gps-uart1.sock"
+	gate "i  UART1 written unpaced for 90 s (writer rc $bl_rc, $bl_bytes B): web and console answer at all 8 probes, all inside the load" \
+		'uart_load_held'
 	console "--reboot" > /dev/null
 	waitfor 'grep -q "restart #2" "$G/run.log"' 180
 	waitfor '[ "$(web)" = 200 ]' 180; eweb=$?
@@ -176,48 +190,77 @@ if [[ "$MODES" == *" --controls "* ]]; then
 	echo "== failing controls"
 	"$ROOT/scripts/apply-overlay.sh" > /dev/null
 	# a: an old patch hunk re-applied (hunk 14 of the former overlay patch, src/loop_functions.cpp)
-	git -C "$ROOT" show c2335d12:overlay/patches/meshcom-qemu-headless.patch > "$G/old.patch" 2>/dev/null
-	git -C "$FW" apply --include=src/loop_functions.cpp "$G/old.patch" 2>/dev/null
-	"$ROOT/scripts/apply-overlay.sh" > "$G/apply-c.log" 2>&1; arc=$?
-	control "a  (a re-applied hunk)" '[ "$arc" = 0 ]'
+	if setup "a: the old patch extracted from history (c2335d12) and its hunk applied" \
+		'git -C "$ROOT" show c2335d12:overlay/patches/meshcom-qemu-headless.patch > "$G/old.patch" && git -C "$FW" apply --include=src/loop_functions.cpp "$G/old.patch"'; then
+		"$ROOT/scripts/apply-overlay.sh" > "$G/apply-c.log" 2>&1; arc=$?
+		control "a  (a re-applied hunk)" '[ "$arc" = 0 ]'
+	fi
 	git -C "$FW" checkout -q -- .
 	# b: a build without the hand-over (initVariant and the task; only `neth` kept): the provisioning boot
 	# panics in the Wi-Fi PHY -> no marker
 	printf '#include <configuration.h>\n#include "esp32/esp32_eth.h"\nEspETH neth;\n' > "$FW/src/qemu/qemu_ethmode.cpp"
 	build "$ENV"; cbrc=$?
 	NODE="$G/node-cb/node-flash.bin"; brc=x
-	if [ "$cbrc" = 0 ]; then
+	if setup "b: the build without the hand-over (rc $cbrc)" '[ "$cbrc" = 0 ]'; then
 		PROVISION_TIMEOUT=300 start_node "$NODE"
 		waitfor '! kill -0 "$RP" 2>/dev/null' 600; wait "$RP"; brc=$?; RP=""
+		setup "b: run.sh ended in a provisioning failure (rc $brc, want 3)" '[ "$brc" = 3 ]' \
+			&& control "b  (no hand-over; run.sh rc $brc)" '[ -s "$NODE.provisioned" ]'
 	fi
-	control "b  (no hand-over; build rc $cbrc, run.sh rc $brc)" '[ "$cbrc" != 0 ] || [ -s "$NODE.provisioned" ]'
-	"$ROOT/scripts/apply-overlay.sh" > /dev/null; build "$ENV"
+	"$ROOT/scripts/apply-overlay.sh" > /dev/null
+	setup "the normal build again" 'build "$ENV"' || { echo "---"; echo "FAILURES: $FAILS"; exit 1; }
 	# d, e, f, g, c on copies of the provisioned node, changed at run time over the console
 	PROV="$G/node/node-flash.bin"; NODE=""
 	copy_node() { mkdir -p "$G/$1"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/$1/"; echo "$G/$1/node-flash.bin"; }
 	[ -s "$PROV.provisioned" ] && NODE="$(copy_node node-c1)" || echo "SKIP  d/e/f/g/c controls: run --main first"
 	if [ -n "$NODE" ]; then
-		start_bridge; start_node "$NODE"; waitfor '[ "$(web)" = 200 ] && console_ok' 300
-		console "--mesh on" > /dev/null; sleep 3
-		info="$(console "--info" '\.\.\.MESH (?:on|off)|\.\.\.EXTUDP (?:on|off)|Gateway (?:on|off)')"
-		control "g  (--mesh on)" '[ "$info" = "...MESH off | ...EXTUDP off | Gateway off" ]'
-		console "--mesh off" > /dev/null
-		pos="$(console "--pos" 'SAT: [0-9]+ - (?:fix|nofix)')"; sat="$(printf '%s' "$pos" | grep -oE '[0-9]+' | head -1)"
-		control "d  (relay off: --pos)" '[ "${sat:-0}" -gt 0 ] && [ "${pos##* }" = fix ]'
-		console "--mtu 1500" > /dev/null; console "--reboot" > /dev/null
-		waitfor 'grep -q "restart #1" "$G/run.log"' 180; waitfor '[ "$(web)" = 200 ]' 180
-		control "f  (--mtu 1500)" 'grep -aq "\[NET\];mtu;eth;1280" "$(UARTLOG)"'
+		start_bridge; start_node "$NODE"
+		if setup "the controls' node answers (web 200, console banner)" 'waitfor '"'"'[ "$(web)" = 200 ] && console_ok'"'"' 300'; then
+			ire='\.\.\.MESH (?:on|off)|\.\.\.EXTUDP (?:on|off)|Gateway (?:on|off)'
+			info="$(console "--info" "$ire")"
+			if setup "g: the baseline --info reads MESH off, EXTUDP off, Gateway off" '[ "$info" = "...MESH off | ...EXTUDP off | Gateway off" ]'; then
+				console "--mesh on" > /dev/null; sleep 3
+				info="$(console "--info" "$ire")"
+				setup "g: --info now reads MESH on ($info)" 'printf "%s" "$info" | grep -qF "...MESH on"' \
+					&& control "g  (--mesh on)" '[ "$info" = "...MESH off | ...EXTUDP off | Gateway off" ]'
+				console "--mesh off" > /dev/null
+			fi
+			pos="$(console "--pos" 'SAT: [0-9]+ - (?:fix|nofix)')"; sat="$(printf '%s' "$pos" | grep -oE '[0-9]+' | head -1)"
+			setup "d: --pos answered with a SAT line ($pos)" '[ -n "$pos" ] && [ "$pos" != "console-error" ]' \
+				&& control "d  (relay off: --pos)" '[ "${sat:-0}" -gt 0 ] && [ "${pos##* }" = fix ]'
+			console "--mtu 1500" > /dev/null; console "--reboot" > /dev/null
+			if setup "f: --reboot -> restart #1 and web 200" 'waitfor '"'"'grep -q "restart #1" "$G/run.log"'"'"' 180 && waitfor '"'"'[ "$(web)" = 200 ]'"'"' 180'; then
+				# upstream prints [NET];mtu only when it changes the netif's MTU, and lwIP's default is 1500,
+				# so the altered state is read from --info
+				mtu="$(console "--info" 'MTU\s*:\s*[0-9]+')"
+				setup "f: --info after the restart reads MTU 1500 ($mtu)" 'printf "%s" "$mtu" | grep -qE ":\s*1500$"' \
+					&& control "f  (--mtu 1500)" 'grep -aq "\[NET\];mtu;eth;1280" "$(UARTLOG)"'
+			fi
+		fi
 		stop_all
 		# e: run.sh without -no-reboot: no restart line after --reboot
 		sed '/-no-reboot/d' "$ROOT/scripts/run.sh" > "$ROOT/scripts/.run-noreboot.sh"; chmod +x "$ROOT/scripts/.run-noreboot.sh"
-		start_node "$NODE" "$ROOT/scripts/.run-noreboot.sh"; waitfor '[ "$(web)" = 200 ] && console_ok' 300
-		console "--reboot" > /dev/null; sleep 60
-		control "e  (no -no-reboot)" 'grep -q "restart #1" "$G/run.log"'
+		start_node "$NODE" "$ROOT/scripts/.run-noreboot.sh"
+		if setup "e: the node without -no-reboot answers" 'waitfor '"'"'[ "$(web)" = 200 ] && console_ok'"'"' 300'; then
+			console "--reboot" > /dev/null; sleep 60
+			setup "e: the runner still runs after --reboot (QEMU reset in place)" 'kill -0 "$RP"' \
+				&& control "e  (no -no-reboot)" 'grep -q "restart #1" "$G/run.log"'
+		fi
 		stop_all; rm -f "$ROOT/scripts/.run-noreboot.sh"
+		# i: the writer fails (no such socket): gate i must not hold on an idle guest
+		NODE="$(copy_node node-c3)"; start_node "$NODE"
+		if setup "i: the node answers (web 200, console banner)" 'waitfor '"'"'[ "$(web)" = 200 ] && console_ok'"'"' 300'; then
+			uart_load "$G/no-such.sock"
+			setup "i: the writer failed (rc $bl_rc)" '[ "$bl_rc" != 0 ]' && control "i  (a failed writer)" 'uart_load_held'
+		fi
+		stop_all
 		# c: the console switched off
-		NODE="$(copy_node node-c2)"; start_node "$NODE"; waitfor '[ "$(web)" = 200 ] && console_ok' 300
-		console "--netconsole off" > /dev/null; sleep 3
-		control "c  (--netconsole off)" 'console_ok'
+		NODE="$(copy_node node-c2)"; start_node "$NODE"
+		if setup "c: the node answers (web 200, console banner)" 'waitfor '"'"'[ "$(web)" = 200 ] && console_ok'"'"' 300'; then
+			console "--netconsole off" > /dev/null; sleep 3
+			setup "c: the guest still serves its web page (only the console is off)" 'waitfor '"'"'[ "$(web)" = 200 ]'"'"' 60' \
+				&& control "c  (--netconsole off)" 'console_ok'
+		fi
 		stop_all
 	fi
 fi
@@ -230,9 +273,9 @@ fi
 if [[ "$MODES" == *" --slow-b "* ]]; then
 	"$ROOT/scripts/apply-overlay.sh" > /dev/null
 	# b': a flag clear in Ethernet mode reaches upstream's initethDHCP() (the loop's 5-minute path)
-	build "$ENV" "-DQEMU_TEST_CLEAR_FLAG_MS=8000"
-	mkdir -p "$G/node-b2"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/node-b2/" 2>/dev/null
-	start_node "$G/node-b2/node-flash.bin"; waitfor '[ "$(web)" = 200 ]' 300
+	setup "b': the test build" 'build "$ENV" "-DQEMU_TEST_CLEAR_FLAG_MS=8000"'
+	mkdir -p "$G/node-b2"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/node-b2/"
+	start_node "$G/node-b2/node-flash.bin"; setup "b': the node answers" 'waitfor '"'"'[ "$(web)" = 200 ]'"'"' 300'
 	waitfor 'grep -aq "\[ETH\] DHCP IP" "$(UARTLOG)"' 400
 	waitfor '[ "$(web)" = 200 ]' 30; bweb=$?
 	gate "b' a flag clear -> [ETH] DHCP IP via the stand-in, web 200" 'grep -aq "TEST: node_hasIPaddress cleared" "$(UARTLOG)" && grep -aq "\[ETH\] DHCP IP" "$(UARTLOG)" && [ "$bweb" = 0 ]'
@@ -240,13 +283,14 @@ if [[ "$MODES" == *" --slow-b "* ]]; then
 	# b' control: without the stand-in headers the build fails
 	mv "$FW/variants/qemu-headless/ETHClass2.h" "$G/"; build "$ENV"; src=$?
 	mv "$G/ETHClass2.h" "$FW/variants/qemu-headless/"
-	control "b' (no ETHClass2.h stand-in)" '[ "$src" = 0 ]'
+	setup "b': the build log names the missing ETHClass2.h" '[ "$src" = 0 ] || grep -q "ETHClass2.h" "$G/build-$ENV.log"' \
+		&& control "b' (no ETHClass2.h stand-in)" '[ "$src" = 0 ]'
 fi
 if [[ "$MODES" == *" --slow-k "* ]]; then
 	"$ROOT/scripts/apply-overlay.sh" > /dev/null
 	# k: OpenETH never starts, a node with saved settings: readiness withdrawn, nothing reachable
-	build "$ENV" "-DQEMU_TEST_NO_OPENETH"
-	mkdir -p "$G/node-k"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/node-k/" 2>/dev/null
+	setup "k: the test build" 'build "$ENV" "-DQEMU_TEST_NO_OPENETH"'
+	mkdir -p "$G/node-k"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/node-k/"
 	start_node "$G/node-k/node-flash.bin"; sleep 20
 	K="$(UARTLOG)"; kreach=0
 	for k in $(seq 1 14); do [ "$(web / 5)" = 200 ] && kreach=1; console_ok && kreach=1; sleep 25; done
@@ -261,21 +305,28 @@ if [[ "$MODES" == *" --slow-k "* ]]; then
 fi
 if [[ "$MODES" == *" --slow-k2 "* ]]; then
 	"$ROOT/scripts/apply-overlay.sh" > /dev/null
-	build "$ENV" "-DQEMU_TEST_NO_OPENETH"
-	mkdir -p "$G/node-k"; cp "$PROV" "$PROV.efuse" "$G/node-k/" 2>/dev/null
-	rm -f "$G/node-k/node-flash.bin.provisioned"; PROVISION_TIMEOUT=120 start_node "$G/node-k/node-flash.bin"
+	setup "k2: the test build" 'build "$ENV" "-DQEMU_TEST_NO_OPENETH"'
+	# A fresh node: no image yet, so node-image.sh creates it from this build (the stock defaults).
+	rm -rf "$G/node-k2"; PROVISION_TIMEOUT=120 start_node "$G/node-k2/node-flash.bin"
 	waitfor '! kill -0 "$RP" 2>/dev/null' 600; wait "$RP"; krc=$?; RP=""
-	gate "k  a fresh node in this build -> provisioning rc 3, no marker" '[ "$krc" = 3 ] && [ ! -e "$G/node-k/node-flash.bin.provisioned" ]'
+	gate "k  a fresh node (image created from this build) -> provisioning rc 3, no marker" \
+		'grep -q "node image: created from the build" "$G/run.log" && [ "$krc" = 3 ] && [ ! -e "$G/node-k2/node-flash.bin.provisioned" ]'
 fi
 if [[ "$MODES" == *" --slow-l "* ]]; then
 	"$ROOT/scripts/apply-overlay.sh" > /dev/null
 	# l control: the old qemu_network.cpp (link loss kept readiness)
-	git -C "$ROOT" show c2335d12:overlay/src/qemu/qemu_network.cpp > "$FW/src/qemu/qemu_network.cpp"; build "$ENV"
-	mkdir -p "$G/node-l"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/node-l/" 2>/dev/null
-	start_node "$G/node-l/node-flash.bin"; waitfor '[ "$(web)" = 200 ]' 300
-	L="$(UARTLOG)"; monitor "set_link net0 off"; sleep 12
-	control "l  (old qemu_network.cpp)" 'grep -aq "readiness withdrawn" "$L"'
-	monitor "set_link net0 on"; stop_all
+	if setup "l: the old qemu_network.cpp extracted from history (c2335d12) and built" \
+		'git -C "$ROOT" show c2335d12:overlay/src/qemu/qemu_network.cpp > "$FW/src/qemu/qemu_network.cpp" && build "$ENV"'; then
+		mkdir -p "$G/node-l"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/node-l/"
+		start_node "$G/node-l/node-flash.bin"
+		if setup "l: the node answers" 'waitfor '"'"'[ "$(web)" = 200 ]'"'"' 300'; then
+			L="$(UARTLOG)"; monitor "set_link net0 off"; sleep 12
+			setup "l: the link is down (web from the host fails)" '[ "$(web / 5)" != 200 ]' \
+				&& control "l  (old qemu_network.cpp)" 'grep -aq "readiness withdrawn" "$L"'
+			monitor "set_link net0 on"
+		fi
+		stop_all
+	fi
 fi
 
 echo "---"

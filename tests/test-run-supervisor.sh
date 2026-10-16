@@ -36,6 +36,7 @@ ENV=qemu-headless-extradio-gpsd
 #   boot SECS [INFO]   a boot: Ethernet mode + console lines, a console and a web page; resets (rc 0)
 #                      after SECS (inf = never). INFO replaces the --info reply's settings line.
 #   boot-noterm        a boot that ignores TERM (needs KILL)
+#   boot-exec-term     a boot whose TERM turns the process into another program (same PID, no guest)
 #   exit1              QEMU fails at once (rc 1)
 cat > "$T/qemu-stub" <<'EOF'
 #!/usr/bin/env python3
@@ -69,6 +70,9 @@ if m.startswith("prov"):
             with open(os.environ["STUB_STDIN"], "w") as f: f.write("\n".join(got) + "\n")
             time.sleep(0.5); sys.exit(0)
     sys.exit(0)
+if m == "boot-exec-term":
+    signal.signal(signal.SIGTERM, lambda *a: (note("TERM-exec %d" % n), os.execv("/bin/sleep", ["sleep", "61"])))
+    while True: time.sleep(0.2)
 if m == "boot-noterm":
     signal.signal(signal.SIGTERM, lambda *a: note("TERM-ignored %d" % n))
     while True: time.sleep(1)
@@ -136,6 +140,17 @@ for c in "prov-noack|no acknowledgement" "prov-rc1|QEMU exited rc=1" "prov-hang|
 	PROVISION_TIMEOUT=3 start; finish 40
 	check "$mode -> rc 3, no marker ($msg)" '[ "$RC" = 3 ] && [ ! -e "$NODE.provisioned" ] && grep -q "$msg" "$T/run.out"'
 done
+# A node image that exists, with a marker for another command list (node-image.sh keeps the marker of an
+# existing image; it removes one only when it creates or resets the image).
+other_marker() { mkdir -p "$(dirname "$NODE")"; "$R/scripts/node-image.sh" "$R/.work/MeshCom-Firmware/.pio/build/$ENV/flash.bin" "$NODE" >/dev/null
+	echo "2026-01-01T00:00:00Z other" > "$NODE.provisioned"; }
+reset_case prov-noack "boot inf"; other_marker
+PROVISION_TIMEOUT=3 start; finish 40
+check "a marker for another list, provisioning fails -> rc 3, the marker removed" '[ "$RC" = 3 ] && [ ! -e "$NODE.provisioned" ]'
+reset_case prov-hang; other_marker
+start; wait_for 'grep -q "launch 0" "$STUB_LOG"' 20; sleep 1
+kill -TERM "$RP"; finish
+check "a marker for another list, TERM during provisioning -> rc 0, the marker removed" '[ "$RC" = 0 ] && [ ! -e "$NODE.provisioned" ]'
 reset_case prov-ok "boot inf ...NETWORK Mode:ETH ...MESH on ...EXTUDP off / Gateway off"
 PROVISION_TIMEOUT=25 start; finish 80
 cp "$T/run.out" "$T/run-meshon.out"
@@ -175,6 +190,12 @@ reset_case boot-noterm; mark
 start; wait_for 'grep -q "launch 0" "$STUB_LOG"' 20; sleep 1
 t0=$(date +%s); kill -TERM "$RP"; finish 40; dt=$(( $(date +%s) - t0 ))
 check "a guest ignoring TERM is killed after about 10 s, rc 0" '[ "$RC" = 0 ] && grep -q "TERM-ignored 0" "$STUB_LOG" && [ "$dt" -ge 9 ] && ! pgrep -f "[q]emu-stub" >/dev/null'
+reset_case boot-exec-term; mark
+start; wait_for 'grep -q "launch 0" "$STUB_LOG"' 20; sleep 1
+kill -TERM "$RP"; finish 40
+check "a guest PID that became another program while TERM was pending is not killed, rc 0" \
+	'[ "$RC" = 0 ] && grep -q "TERM-exec 0" "$STUB_LOG" && pgrep -x -f "sleep 61" >/dev/null && grep -q "no longer this run" "$T/run.out"'
+pkill -x -f "sleep 61" 2>/dev/null || true
 reset_case "boot 1"; mark
 start; wait_for 'grep -q "launch 0" "$STUB_LOG"' 20
 kill -TERM "$RP"; finish
@@ -201,6 +222,14 @@ echo "$OTHERQ" > "$R/.run/qemu.pid"; echo 99999999 > "$R/.run/run.pid"
 "$R/scripts/stop.sh" > "$T/stop4.out"; src4=$?
 check "stop.sh does not signal another runner's QEMU named by a stale qemu.pid (rc 0)" '[ "$src4" = 0 ] && kill -0 "$OTHERQ" 2>/dev/null && grep -q "not a running guest" "$T/stop4.out"'
 kill "$OTHERQ" 2>/dev/null; wait "$OTHERQ" 2>/dev/null
+# A runner PID that stops being the runner during stop.sh's wait (it drops run.lock and becomes another
+# program, same PID): the SIGKILL after the wait must not reach it.
+bash -c 'exec 8>"$1"; trap "exec 8>&-; exec sleep 62" TERM; while :; do sleep 0.2; done' _ "$R/.run/run.lock" & FR=$!
+sleep 0.5; echo "$FR" > "$R/.run/run.pid"; echo 99999999 > "$R/.run/qemu.pid"
+"$R/scripts/stop.sh" > "$T/stop5.out"; src5=$?
+check "stop.sh does not SIGKILL a runner PID that became another program during the wait (rc 0)" \
+	'[ "$src5" = 0 ] && kill -0 "$FR" 2>/dev/null && grep -q "no longer the process that was checked" "$T/stop5.out"'
+kill "$FR" 2>/dev/null; wait "$FR" 2>/dev/null
 cp "$T/run.pid.real" "$R/.run/run.pid"; echo "$(pgrep -f "[q]emu-stub" | head -1)" > "$R/.run/qemu.pid"
 "$R/scripts/status.sh" > "$T/status.out"; ssrc=$?
 check "status.sh shows a running guest, rc 0" '[ "$ssrc" = 0 ]'

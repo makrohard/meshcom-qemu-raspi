@@ -147,14 +147,31 @@ echo "[run] net-console: 127.0.0.1:12323"
 # STOP; QEMU gets TERM, 10 s, then KILL. EXIT CODES: 0 stopped · 1 setup error · 2 usage · 3 provisioning
 # failed · 5 QEMU exited with an error · 75 restart limit (3 runs < 60 s in a row, or > 10 restarts/hour).
 STOP=0
-QPID=""
+QPID=""; QSTART=""
+# start_of PID: the process's start time (/proc/PID/stat field 22); empty once it is gone.
+start_of() {
+	local s; s="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0
+	# shellcheck disable=SC2086 # the fields after the command name, split on purpose
+	set -- ${s##*) }; printf '%s' "${20}"
+}
+# is_guest: QPID is still the QEMU launched (the same start time, this run's monitor socket in its argv)
+is_guest() {
+	[ -n "$QSTART" ] && [ "$(start_of "$QPID")" = "$QSTART" ] \
+		&& { tr '\0' ' ' < "/proc/$QPID/cmdline"; } 2>/dev/null | grep -qF "unix:$RUN/monitor.sock,"
+}
+# stop_qemu: TERM, 10 s, then KILL only while QPID is still that QEMU (a reused PID is never killed).
 stop_qemu() {
 	[ -n "$QPID" ] || return 0
 	kill -TERM "$QPID" 2>/dev/null || true
 	for _ in $(seq 1 10); do kill -0 "$QPID" 2>/dev/null || break; sleep 1; done
-	kill -KILL "$QPID" 2>/dev/null || true
-	wait "$QPID" 2>/dev/null || true
-	QPID=""
+	if ! kill -0 "$QPID" 2>/dev/null; then
+		wait "$QPID" 2>/dev/null || true
+	elif is_guest; then
+		kill -KILL "$QPID" 2>/dev/null || true; wait "$QPID" 2>/dev/null || true
+	else
+		echo "[run] pid $QPID is no longer this run's QEMU; not killed" >&2
+	fi
+	QPID=""; QSTART=""
 }
 on_signal() { STOP=1; stop_qemu; rm -f "$RUN/run.pid"; exit 0; }
 trap on_signal TERM INT
@@ -163,12 +180,12 @@ qemu_alive() { [ -n "$QPID" ] && kill -0 "$QPID" 2>/dev/null; }
 launch() {
 	if [ -n "${2:-}" ]; then "${QEMU_CMD[@]}" <&"$2" >> "$1" 2>&1 &
 	else "${QEMU_CMD[@]}" >> "$1" 2>&1 & fi
-	QPID=$!
+	QPID=$!; QSTART="$(start_of "$QPID")"
 	put "$RUN/qemu.pid" "$QPID"
 	echo "[run] QEMU pid $QPID, UART log $1"
 }
 # wait_rc: the exit code of the QEMU just ended.
-wait_rc() { local rc=0; wait "$QPID" || rc=$?; QPID=""; return "$rc"; }
+wait_rc() { local rc=0; wait "$QPID" || rc=$?; QPID=""; QSTART=""; return "$rc"; }
 
 # --- Provisioning (a node image without a matching marker) -----------------------------------------
 # The persistent settings come from MeshCom's own console commands, sent over UART0 once. The
@@ -232,6 +249,9 @@ verify_persisted() {
 
 VERIFY=0
 if [ "$(cat "$MARKER" 2>/dev/null | cut -d' ' -f2)" != "$PROVISION_SHA" ]; then
+	# A marker for another command list is void from here on: a failed or stopped provisioning must not
+	# leave it to be trusted again (after a revert of the list) over partly changed settings.
+	rm -f "$MARKER"
 	provision
 	VERIFY=1
 fi
