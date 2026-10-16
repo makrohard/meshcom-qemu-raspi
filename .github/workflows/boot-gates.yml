@@ -45,6 +45,7 @@ jobs:
             tests/{test-apply-overlay,test-run-supervisor,test-boot-gates,test-node-image}.sh
           for t in tests/test-apply-overlay.sh tests/test-run-supervisor.sh tests/test-node-image.sh \
                    tests/test-node-efuse.sh tests/test-setup-src.sh; do echo "== $t"; bash "$t"; done
+          bash tests/test-boot-gates.sh --self-test
       - name: QEMU (cached by recipe and patch)
         id: qemu-cache
         uses: actions/cache@v4

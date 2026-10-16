@@ -62,10 +62,11 @@ to `127.0.0.1` is reachable there. The full daemon + bridge + QEMU stack: [STACK
 
 ## Tests
 - Quick, no QEMU: `tests/test-apply-overlay.sh`, `tests/test-run-supervisor.sh`, `tests/test-node-image.sh`,
-  `tests/test-node-efuse.sh`, `tests/test-setup-src.sh`, `tests/test-build-qemu.sh`, `tests/test-fetch-qemu.sh`.
+  `tests/test-node-efuse.sh`, `tests/test-setup-src.sh`, `tests/test-build-qemu.sh`, `tests/test-fetch-qemu.sh`,
+  `tests/test-boot-gates.sh --self-test` (its shared predicates on failed reads, a late recovery, a missing node).
 - Slow, the real firmware: `BRIDGE=<meshcom-loraham-bridge> QEMU_BIN=<qemu-system-xtensa> tests/test-boot-gates.sh
   --main --controls --slow` builds the four envs, provisions a fresh node and checks the network, console,
-  web, external radio, GPS, MTU, settings, restarts and link loss; `--controls` proves each check can fail.
+  web, external radio, GPS, MTU, settings, restarts and link loss; `--controls` proves most checks can fail.
 - `scripts/test.sh` is the host test LoRaHAM Pi Control runs after a build (boot marker plus diagnostics).
 - The weekly workflow `.github/workflows/boot-gates.yml` runs the slow test against upstream `dev`; a failure
   opens or updates one issue naming the upstream commit and the failing gate. GitHub pauses scheduled

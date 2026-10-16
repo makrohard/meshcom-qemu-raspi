@@ -8,6 +8,7 @@
 #
 #   --main      (default) gates a–l on the LHPC env qemu-headless-extradio-gpsd, from a fresh node
 #   --controls  each gate's failing control: the gate's assertion must FAIL on it
+#   --self-test the shared predicates on fixed inputs only (seconds; no QEMU, BRIDGE or QEMU_BIN needed)
 #   --slow      the test builds, several minutes each; also one at a time: --slow-b (b': a flag clear
 #               reaches upstream's initethDHCP), --slow-k (k: OpenETH never starts, a provisioned node),
 #               --slow-k2 (k: the same build, a fresh node), --slow-l (l's control: the old qemu_network.cpp)
@@ -21,9 +22,9 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FW="$ROOT/.work/MeshCom-Firmware"
 ENV=qemu-headless-extradio-gpsd
-: "${BRIDGE:?BRIDGE=<meshcom-loraham-bridge>}" "${QEMU_BIN:?QEMU_BIN=<qemu-system-xtensa>}"
 PIO="${PIO:-pio}"
 G="$ROOT/.run/gates"
+PROV="$G/node/node-flash.bin"          # the node --main provisions; --controls and --slow copy it
 FAILS=0
 pass() { echo "PASS  $1"; }
 fail() { echo "FAIL  $1"; FAILS=$((FAILS+1)); }
@@ -33,6 +34,36 @@ gate() { if eval "$2" 2>/dev/null; then pass "$1"; else fail "$1"; fi; }
 setup() { if eval "$2" 2>/dev/null; then return 0; fi; fail "setup $1"; return 1; }
 # expect_fail: a control passes when the gate's assertion is FALSE on it.
 control() { if eval "$2" 2>/dev/null; then fail "control $1 (the assertion still held)"; else pass "control $1 (the assertion failed, as it must)"; fi; }
+# sat_reply POS: POS is the console's complete --pos answer (one or more "SAT: n - fix|nofix"), never a
+# failed read ("console-error <type>") or a partial line.
+sat_reply() { [[ "$1" =~ ^SAT:\ [0-9]+\ -\ (fix|nofix)(\ \|\ SAT:\ [0-9]+\ -\ (fix|nofix))*$ ]]; }
+# within LIMIT RC SECS: a waitfor that succeeded (RC 0) within LIMIT measured seconds. waitfor counts
+# attempts, and one attempt can take longer than a second, so its own bound is not a time.
+within() { [ "$2" = 0 ] && [ "$3" -le "$1" ]; }
+# prov_copy NAME: copy the node --main provisioned into $G/NAME and print its image path; fails when
+# there is no provisioned node or the copy fails.
+prov_copy() { [ -s "$PROV.provisioned" ] && mkdir -p "$G/$1" && cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/$1/" \
+	&& echo "$G/$1/node-flash.bin"; }
+# --self-test: the predicates above on fixed inputs (failed reads, a late recovery, a missing node); no QEMU.
+if [ "${1:-}" = --self-test ]; then
+	gate "sat_reply: one SAT line" 'sat_reply "SAT: 7 - fix"'
+	gate "sat_reply: no fix" 'sat_reply "SAT: 0 - nofix"'
+	gate "sat_reply: two SAT lines" 'sat_reply "SAT: 7 - fix | SAT: 8 - fix"'
+	gate "sat_reply rejects an empty read" '! sat_reply ""'
+	gate "sat_reply rejects a refused connection" '! sat_reply "console-error ConnectionRefusedError"'
+	gate "sat_reply rejects a timeout" '! sat_reply "console-error timeout"'
+	gate "sat_reply rejects a partial line" '! sat_reply "SAT: 7"'
+	gate "within: 60 s of 60" 'within 60 0 60'
+	gate "within rejects a recovery after 77 s" '! within 60 0 77'
+	gate "within rejects a waitfor that gave up" '! within 60 1 30'
+	G="$(mktemp -d)"; PROV="$G/node/node-flash.bin"
+	gate "prov_copy fails without a provisioned node" '! prov_copy x > /dev/null'
+	mkdir -p "$G/node"; echo f > "$PROV"; echo e > "$PROV.efuse"; echo m > "$PROV.provisioned"
+	gate "prov_copy copies the provisioned node" '[ "$(prov_copy y)" = "$G/y/node-flash.bin" ] && [ -s "$G/y/node-flash.bin.provisioned" ]'
+	rm -rf "$G"
+	echo "---"; [ "$FAILS" = 0 ] && { echo "SELF-TEST OK"; exit 0; } || { echo "FAILURES: $FAILS"; exit 1; }
+fi
+: "${BRIDGE:?BRIDGE=<meshcom-loraham-bridge>}" "${QEMU_BIN:?QEMU_BIN=<qemu-system-xtensa>}"
 MODES=" $* "; [ -z "${*:-}" ] && MODES=" --main "
 [[ "$MODES" == *" --slow "* ]] && MODES="$MODES --slow-b --slow-k --slow-k2 --slow-l "
 # --main starts from nothing; --controls and --slow use the node --main provisioned.
@@ -181,7 +212,7 @@ if [[ "$MODES" == *" --main "* ]]; then
 	waitfor '[ "$(grep -ac "ethmode: IP .* reported" "$B3")" -gt "$n0" ]' 30; rt=$(( $(date +%s) - t0 ))
 	gate "l  set_link on: the address reported again within 30 s (${rt} s)" '[ "$(grep -ac "ethmode: IP .* reported" "$B3")" -gt "$n0" ] && [ "$rt" -le 30 ]'
 	t0=$(date +%s); waitfor '[ "$(web / 5)" = 200 ]' 60; lweb=$?; wt2=$(( $(date +%s) - t0 ))
-	gate "l  ... and the web page answers 200 again (${wt2} s after the report)" '[ "$lweb" = 0 ]'
+	gate "l  ... and the web page answers 200 again within 60 s (${wt2} s after the report)" 'within 60 "$lweb" "$wt2"'
 	cp "$B1" "$G/boot1.log"; cp "$B2" "$G/boot2.log"; cp "$B3" "$G/boot3.log"
 	stop_all
 fi
@@ -210,10 +241,7 @@ if [[ "$MODES" == *" --controls "* ]]; then
 	"$ROOT/scripts/apply-overlay.sh" > /dev/null
 	setup "the normal build again" 'build "$ENV"' || { echo "---"; echo "FAILURES: $FAILS"; exit 1; }
 	# d, e, f, g, c on copies of the provisioned node, changed at run time over the console
-	PROV="$G/node/node-flash.bin"; NODE=""
-	copy_node() { mkdir -p "$G/$1"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/$1/"; echo "$G/$1/node-flash.bin"; }
-	[ -s "$PROV.provisioned" ] && NODE="$(copy_node node-c1)" || echo "SKIP  d/e/f/g/c controls: run --main first"
-	if [ -n "$NODE" ]; then
+	if setup "d/e/f/g: a copy of the node --main provisioned" 'NODE="$(prov_copy node-c1)"'; then
 		start_bridge; start_node "$NODE"
 		if setup "the controls' node answers (web 200, console banner)" 'waitfor '"'"'[ "$(web)" = 200 ] && console_ok'"'"' 300'; then
 			ire='\.\.\.MESH (?:on|off)|\.\.\.EXTUDP (?:on|off)|Gateway (?:on|off)'
@@ -226,7 +254,7 @@ if [[ "$MODES" == *" --controls "* ]]; then
 				console "--mesh off" > /dev/null
 			fi
 			pos="$(console "--pos" 'SAT: [0-9]+ - (?:fix|nofix)')"; sat="$(printf '%s' "$pos" | grep -oE '[0-9]+' | head -1)"
-			setup "d: --pos answered with a SAT line ($pos)" '[ -n "$pos" ] && [ "$pos" != "console-error" ]' \
+			setup "d: --pos answered with a complete SAT reply ($pos)" 'sat_reply "$pos"' \
 				&& control "d  (relay off: --pos)" '[ "${sat:-0}" -gt 0 ] && [ "${pos##* }" = fix ]'
 			console "--mtu 1500" > /dev/null; console "--reboot" > /dev/null
 			if setup "f: --reboot -> restart #1 and web 200" 'waitfor '"'"'grep -q "restart #1" "$G/run.log"'"'"' 180 && waitfor '"'"'[ "$(web)" = 200 ]'"'"' 180'; then
@@ -251,33 +279,36 @@ if [[ "$MODES" == *" --controls "* ]]; then
 		fi
 		stop_all; rm -f "$ROOT/scripts/.run-noreboot.sh"
 		# i: the writer fails (no such socket): gate i must not hold on an idle guest
-		NODE="$(copy_node node-c3)"; start_node "$NODE"
-		if setup "i: the node answers (web 200, console banner)" 'waitfor '"'"'[ "$(web)" = 200 ] && console_ok'"'"' 300'; then
-			uart_load "$G/no-such.sock"
-			setup "i: the writer failed (rc $bl_rc)" '[ "$bl_rc" != 0 ]' && control "i  (a failed writer)" 'uart_load_held'
+		if setup "i: a copy of the provisioned node" 'NODE="$(prov_copy node-c3)"'; then
+			start_node "$NODE"
+			if setup "i: the node answers (web 200, console banner)" 'waitfor '"'"'[ "$(web)" = 200 ] && console_ok'"'"' 300'; then
+				uart_load "$G/no-such.sock"
+				setup "i: the writer failed (rc $bl_rc)" '[ "$bl_rc" != 0 ]' && control "i  (a failed writer)" 'uart_load_held'
+			fi
+			stop_all
 		fi
-		stop_all
 		# c: the console switched off
-		NODE="$(copy_node node-c2)"; start_node "$NODE"
-		if setup "c: the node answers (web 200, console banner)" 'waitfor '"'"'[ "$(web)" = 200 ] && console_ok'"'"' 300'; then
-			console "--netconsole off" > /dev/null; sleep 3
-			setup "c: the guest still serves its web page (only the console is off)" 'waitfor '"'"'[ "$(web)" = 200 ]'"'"' 60' \
-				&& control "c  (--netconsole off)" 'console_ok'
+		if setup "c: a copy of the provisioned node" 'NODE="$(prov_copy node-c2)"'; then
+			start_node "$NODE"
+			if setup "c: the node answers (web 200, console banner)" 'waitfor '"'"'[ "$(web)" = 200 ] && console_ok'"'"' 300'; then
+				console "--netconsole off" > /dev/null; sleep 3
+				setup "c: the guest still serves its web page (only the console is off)" 'waitfor '"'"'[ "$(web)" = 200 ]'"'"' 60' \
+					&& control "c  (--netconsole off)" 'console_ok'
+			fi
+			stop_all
 		fi
-		stop_all
 	fi
 fi
 
 if [[ "$MODES" == *" --slow-"* ]]; then
 	echo "== slow cases (test builds)"
-	PROV="$G/node/node-flash.bin"
-	[ -s "$PROV.provisioned" ] || { echo "SKIP  slow cases: run --main first (they need a provisioned node)"; exit 1; }
+	setup "slow cases: the node --main provisioned" '[ -s "$PROV.provisioned" ]' || { echo "---"; echo "FAILURES: $FAILS"; exit 1; }
 fi
 if [[ "$MODES" == *" --slow-b "* ]]; then
 	"$ROOT/scripts/apply-overlay.sh" > /dev/null
 	# b': a flag clear in Ethernet mode reaches upstream's initethDHCP() (the loop's 5-minute path)
 	setup "b': the test build" 'build "$ENV" "-DQEMU_TEST_CLEAR_FLAG_MS=8000"'
-	mkdir -p "$G/node-b2"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/node-b2/"
+	setup "b': a copy of the provisioned node" 'prov_copy node-b2 > /dev/null'
 	start_node "$G/node-b2/node-flash.bin"; setup "b': the node answers" 'waitfor '"'"'[ "$(web)" = 200 ]'"'"' 300'
 	waitfor 'grep -aq "\[ETH\] DHCP IP" "$(UARTLOG)"' 400
 	waitfor '[ "$(web)" = 200 ]' 30; bweb=$?
@@ -293,8 +324,9 @@ if [[ "$MODES" == *" --slow-k "* ]]; then
 	"$ROOT/scripts/apply-overlay.sh" > /dev/null
 	# k: OpenETH never starts, a node with saved settings: readiness withdrawn, nothing reachable
 	setup "k: the test build" 'build "$ENV" "-DQEMU_TEST_NO_OPENETH"'
-	mkdir -p "$G/node-k"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/node-k/"
+	setup "k: a copy of the provisioned node" 'prov_copy node-k > /dev/null'
 	start_node "$G/node-k/node-flash.bin"; sleep 20
+	setup "k: the runner runs the node" 'kill -0 "$RP"'
 	K="$(UARTLOG)"; kreach=0
 	for k in $(seq 1 14); do [ "$(web / 5)" = 200 ] && kreach=1; console_ok && kreach=1; sleep 25; done
 	# Upstream retries initethDHCP() only while node_hasIPaddress is false (startNetwork(), the loop's
@@ -312,17 +344,21 @@ if [[ "$MODES" == *" --slow-k2 "* ]]; then
 	# A fresh node: no image yet, so node-image.sh creates it from this build (the stock defaults).
 	rm -rf "$G/node-k2"; PROVISION_TIMEOUT=120 start_node "$G/node-k2/node-flash.bin"
 	waitfor '! kill -0 "$RP" 2>/dev/null' 600; wait "$RP"; krc=$?; RP=""
-	gate "k  a fresh node (image created from this build) -> provisioning rc 3, no marker" \
-		'grep -q "node image: created from the build" "$G/run.log" && [ "$krc" = 3 ] && [ ! -e "$G/node-k2/node-flash.bin.provisioned" ]'
+	# rc 3 alone also comes from a guest that never booted: the firmware's own boot line must be in the
+	# provisioning UART log that run.sh's failure line names.
+	klog="$(sed -n 's/.*provisioning FAILED: .* (log: \(.*\))$/\1/p' "$G/run.log" | tail -1)"
+	setup "k2: the guest booted the firmware ([BOOT] RESET_REASON in ${klog:-no provisioning log named})" \
+		'[ -n "$klog" ] && grep -aq "\[BOOT\] RESET_REASON" "$klog"' \
+		&& gate "k  a fresh node (image created from this build) -> provisioning rc 3, no marker" \
+			'grep -q "node image: created from the build" "$G/run.log" && [ "$krc" = 3 ] && [ ! -e "$G/node-k2/node-flash.bin.provisioned" ]'
 fi
 if [[ "$MODES" == *" --slow-l "* ]]; then
 	"$ROOT/scripts/apply-overlay.sh" > /dev/null
 	# l control: the old qemu_network.cpp (link loss kept readiness)
 	if setup "l: the old qemu_network.cpp extracted from history (c2335d12) and built" \
 		'git -C "$ROOT" show c2335d12:overlay/src/qemu/qemu_network.cpp > "$FW/src/qemu/qemu_network.cpp" && build "$ENV"'; then
-		mkdir -p "$G/node-l"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/node-l/"
-		start_node "$G/node-l/node-flash.bin"
-		if setup "l: the node answers" 'waitfor '"'"'[ "$(web)" = 200 ]'"'"' 300'; then
+		if setup "l: a copy of the provisioned node" 'prov_copy node-l > /dev/null' \
+			&& start_node "$G/node-l/node-flash.bin" && setup "l: the node answers" 'waitfor '"'"'[ "$(web)" = 200 ]'"'"' 300'; then
 			L="$(UARTLOG)"; monitor "set_link net0 off"; sleep 12
 			setup "l: the link is down (web from the host fails)" '[ "$(web / 5)" != 200 ]' \
 				&& control "l  (old qemu_network.cpp)" 'grep -aq "readiness withdrawn" "$L"'

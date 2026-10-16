@@ -1,4 +1,18 @@
-# Code report s5 (A2) v4: stock MeshCom in QEMU, our files only
+# Code report s5 (A2) v4.3: stock MeshCom in QEMU, our files only
+
+**v4.3 delta** (gate 2, Work round W3 on v4.2: RED, four findings, all in the test harness; product logic OK):
+
+| finding | v4.2 | v4.3 |
+|---|---|---|
+| F3 failed console read | control d's setup refused only the exact text `console-error`; `console()` prints `console-error <type>`, so a refused connection or a timeout satisfied it | `sat_reply`: the setup requires the complete `--pos` answer (one or more `SAT: n - fix|nofix`). Control: `--self-test` rejects `console-error ConnectionRefusedError`, `console-error timeout`, an empty read and a partial line. g and f already required an exact reply |
+| F3 missing fixture | a missing provisioned node printed `SKIP` with FAILS=0 and skipped the dependent controls; the copies were unchecked | `prov_copy`: every copy of the provisioned node (controls d/e/f/g, i, c; slow b′, k, l) is a checked setup, so a missing node or a failed copy is a FAIL; the slow block's missing node is a setup FAIL too. k also requires the runner alive before its unreachable-node gate. Control: `--self-test`, `prov_copy` fails without a node |
+| l recovery time | the gate passed whenever `waitfor` succeeded; `waitfor` counts attempts (each up to 5 s of curl), so 77 s passed | `within 60 "$lweb" "$wt2"`: the measured seconds after the report must be ≤ 60, as the plan says. Negative case: `--self-test`, a recovery after 77 s is rejected |
+| k2 without boot evidence (second read) | k2's only start evidence was run.sh's pre-QEMU line "node image: created from the build"; a guest that never booted also ends in rc 3 with no marker | a checked setup: the provisioning UART log that run.sh's failure line names holds the firmware's `[BOOT] RESET_REASON`; otherwise a setup FAIL and k2 is not judged. Measured: two runs with the guest ports taken by another process on this PC ("Could not set up host forwarding rule") ended rc 3 in 20 s, and v4.3's k2 gate would have passed them; v4.3.1's setup failed both |
+| identity | the W3 request named 6507c4bd, the reviewed diff ended at de33f60c | the packet names its exact tip and quotes the interval de33f60c..6507c4bd (packet commit only) |
+| README | "`--controls` proves each check can fail" | "proves most checks can fail"; `--self-test` listed with the quick tests and run in the workflow's quick step |
+
+Red-before (the v4.2 expressions on the W3 inputs): the d setup accepts `console-error ConnectionRefusedError` and `console-error timeout`; the l gate passes at 77 s; a missing node leaves FAILS=0.
+
 
 **v4 delta** (gate 2, Work round W2: RED, six findings; all fixed in fe9b051a):
 
@@ -54,6 +68,13 @@ All runs on an x86_64 Linux host (Fedora 43), MeshCom f2b3a349, QEMU esp-develop
 | 386c056b | report and packet v2 | — | — |
 | b486e34a | stop.sh signals a QEMU only with this checkout's monitor socket | quick: a QEMU-like decoy with another monitor socket survives stop.sh | the new case on the parent's stop.sh: 1 FAIL (the decoy was signalled) |
 | fe9b051a | gate-2 findings F1–F6 (v4 delta above) | quick: 4 new supervisor cases; slow: setup() for every control, gate i via uart_load, control i, k2 from an absent image | the supervisor file on d1b73c84's scripts: 4 FAIL |
+
+## Evidence of record, v4.3 (2026-10-16)
+- x86: `--main` 21/21 (l: web 200 5 s after the report); `--controls` 8/8 with every setup held; `--self-test` 12/12. Run on the working tree that became the v4.3 commit (its test-boot-gates.sh, README and workflow are byte-identical to the commit's).
+- Quick: test-run-supervisor 33/33; test-apply-overlay, test-node-image, test-node-efuse, test-setup-src pass; shellcheck `-S warning` clean on the CI file list.
+- x86 slow modes on d064ebe2 (v4.3 before the k2 setup; the other modes' code is identical): `--slow-k2 --slow-l` 2/2 (85 s), `--slow-b` 2/2 (329 s), `--slow-k` 2/2 (574 s), every new setup held.
+- v4.3.1 (the k2 setup), x86: `--slow-k2` 1/1 with the boot evidence held (36 s; the provisioning failed at "no acknowledgement of --netmode eth", after the firmware booted); `--controls` 8/8 (274 s); `--self-test` 12/12.
+- The scripts (run.sh, stop.sh, node-image.sh, node-efuse.sh, apply-overlay.sh) are unchanged since v4.2, so the Pi 5 `--main` result of v4 stands for them; v4.3 was not run on aarch64.
 
 ## Evidence of record, v4 (fe9b051a, 2026-10-16)
 - x86: `--main` 21/21 (357 s); `--controls` 8/8 with every setup held (283 s); `--slow-k2 --slow-l` 2/2 (82 s); `--slow-b` 2/2; `--slow-k` 2/2 (574 s).
