@@ -1,4 +1,12 @@
-# Code report s5 (A2) v2: stock MeshCom in QEMU, our files only
+# Code report s5 (A2) v3: stock MeshCom in QEMU, our files only
+
+**v3 delta** (gate 1, auditor 2b round 1: two findings):
+
+| finding | v2 | v3 |
+|---|---|---|
+| F1 `scripts/stop.sh` `is_qemu()` | any qemu-system-xtensa with an MTD `.bin` drive passed, so a stale `qemu.pid` naming another runner's guest got TERM/KILL | it must also carry this checkout's `-monitor unix:$RUN/monitor.sock` (b486e34a) |
+| F2 the reused-pid test | a `sleep 100` decoy only; the report claimed more | a decoy whose cmdline passes the generic predicate (asserted) but names another monitor socket must survive `stop.sh`; red-before 1 FAIL on the parent, 29/29 after; x86 `--main` 21/21 on b486e34a |
+| note | "no alignment needed" | narrowed (Controller integration) |
 
 **v2 delta** (after the second read, decided by the handler):
 
@@ -28,13 +36,15 @@ All runs on an x86_64 Linux host (Fedora 43), MeshCom f2b3a349, QEMU esp-develop
 | 6e49bcb1 | gates count one web 200 within a wait (c, e, h, j, l, b′) | gates | a --main run failed l's web step after the wait had seen 200 |
 | 63bd8d60 | report and packet v1 | — | — |
 | 6f5531f0 | the persisted-state check requires `--gps on` for `*-gpsd` (via `--pos`); test finish() bounded | quick: GPS off → rc 3, no marker; position never written | the new test on the parent's run.sh: 1 FAIL |
+| 386c056b | report and packet v2 | — | — |
+| b486e34a | stop.sh signals a QEMU only with this checkout's monitor socket | quick: a QEMU-like decoy with another monitor socket survives stop.sh | the new case on the parent's stop.sh: 1 FAIL (the decoy was signalled) |
 
 ## Evidence of record (HEAD 6e49bcb1)
 - `--main` 21/21 as expected (392 s): a, j, b ×2, c, c-xr ×2, d, f, g, h, i, e, l ×3.
 - `--controls --slow-l --slow-k2` 9/9 (390 s): controls a b c d e f g l, k2.
 - `--slow-b` 2/2 (333 s), `--slow-k` 2/2 (574 s).
 - Quick: test-apply-overlay 4/4, test-run-supervisor 25/25 (176 s; 27/27 on 6f5531f0), test-node-image 29 ok, test-node-efuse and test-setup-src pass.
-- On 6f5531f0 (x86): `--main` 21/21 again (370 s).
+- On 6f5531f0 (x86): `--main` 21/21 again (370 s). On b486e34a (x86): `--main` 21/21 (361 s); test-run-supervisor 29/29.
 - Lifecycle on a fresh node (98acdd33): verified after 46 s; `--setcall` → restart #1, web 200, no `WIFIAP starting`; stop.sh → run.sh rc 0, no QEMU left.
 
 | gate | its failing control (measured: the assertion failed) |
@@ -77,7 +87,7 @@ Harness defects found and fixed while writing the tests: a field index in gate b
 - Heat: 47.2–60.9 °C, `throttled=0x0` throughout. Exit state: the scratch directory removed, the box's meshcom stack stopped as found.
 
 ## Controller integration
-- First start on aarch64 53 s, on x86 46 s, against the controller's readiness timeout of 600 s for meshcom-qemu: no alignment needed.
+- First start on aarch64 (Pi 5) 53 s, on x86 46 s, against the controller's readiness timeout of 600 s for meshcom-qemu: no alignment needed on the Pi 5 and x86. The Pi Zero 2W (the slowest box) is measured in the 0.12.10 live row. `PROVISION_TIMEOUT` (900 s) still exceeds the controller's 600 s.
 
 ## Residual risks
 - **Torn read (with R5):** the hand-over task writes `node_ip`/`node_gw`/`node_subnet` from its own task while the main loop may read them for a display or a web page; a page could show a half-written address during a re-report. Cosmetic: no decision path reads these strings; no synchronisation is added.
@@ -112,10 +122,11 @@ The checker is built for the controller repository. Here: no CHANGELOG exists (N
    - readiness never stands without the netif (gates l, k; control l);
    - no W5500 call at boot (gate b);
    - stop ≠ restart, no marker after a failed or signalled provisioning (test-run-supervisor);
+   - stop.sh signals only this checkout's runner (the process holding `.run/run.lock`) and this checkout's guest (a qemu-system-xtensa with an MTD node image and `unix:$RUN/monitor.sock`); a reused pid, including another runner's QEMU, is not signalled (test-run-supervisor, two decoys);
    - provisioning only with verified persisted state (supervisor tests "MESH on → 3" and "GPS off → 3", gate j).
 3. **Failure classes:**
    - a signal during provisioning; a guest ignoring TERM (KILL after 10 s);
-   - a reused pid, a second runner, a stale `uart-latest.log`, a changed command list, rc 0 without the ack, a provisioning timeout (all in test-run-supervisor);
+   - a reused pid (a plain process, and another runner's QEMU), a second runner, a stale `uart-latest.log`, a changed command list, rc 0 without the ack, a provisioning timeout (all in test-run-supervisor);
    - a driver that never starts (gate k); a link loss (gate l); an unpaced UART (gate i).
    - The stubs model a process lifetime (TERM notes, ports served while alive).
 4. **Test rules:** red-before per fix commit (table); every gate asserts a token, a code or an rc, never a sentence; no unconditional pass; three gates without a natural control are named.

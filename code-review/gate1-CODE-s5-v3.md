@@ -1,18 +1,26 @@
-# Gate 1, CODE v2: s5 runner (stock MeshCom in QEMU, our files only)
+# Gate 1, CODE v3: s5 runner (stock MeshCom in QEMU, our files only)
 
-**Request.** Please review the code of branch `cons/s5-r1` (commits below, base `main` c2335d12) against its plan `plans/PLAN-s5-runner.md` (design v5, reviewed in five gate-1 rounds and one gate-2 round; its text is in file C as part of the diff). This is packet v2: after a second read it adds the GPS check of provisioning (commit 6f5531f0), the aarch64 results and a stated residual (the report's "v2 delta" table). Judge per commit: correctness, fail-closed behaviour (provisioning, the supervisor, readiness), whether each test can fail and proves what it claims (the red-before and the failing controls), the deviations from the plan (report section), and whether docs and comments describe exactly the code. A FINDING needs the file:line and the smallest fix.
+**Request.** Please review branch `cons/s5-r1` (base `main` c2335d12) against its plan `plans/PLAN-s5-runner.md` (in file C). This is packet v3: it answers your round-1 findings F1 (stop.sh ownership) and F2 (the decoy test) with commit b486e34a, and narrows one sentence; the report's "v3 delta" table is first. Judge whether both findings are closed and whether anything else regressed; the earlier per-commit judgement stands unless a change touches it. Answer per commit as before. A FINDING needs the file:line and the smallest fix.
 
-This file and its two companions, `gate1-CODE-s5.md` (this file), `gate1-CODE-s5-B.md` (the commit messages and the diff of tests/ and .github/) and `gate1-CODE-s5-C.md` (diff of the docs, the plan and the removed patch), are your whole input: you have no repository access; use no connector, tool or web lookup.
+This file and its two companions, `gate1-CODE-s5-v3.md` (this file), `gate1-CODE-s5-v3-B.md` (the commit messages and the diff of tests/ and .github/) and `gate1-CODE-s5-v3-C.md` (diff of the docs, the plan and the removed patch), are your whole input: you have no repository access; use no connector, tool or web lookup.
 
 **Answer form:** `| commit | verdict (OK / FINDING) | what |`, one row per commit, then the findings, then a final line GREEN / GREEN WITH NOTES / RED.
 
-**Redaction:** two upstream call signs inside the removed patch (an upstream splash-credit string) are written `XX1XXX`. Nothing else is altered; the diffs are `git diff` output verbatim. `10.0.2.x` are QEMU's internal user-network addresses, `127.0.0.1` is loopback, `XX9TST-1` is a placeholder callsign.
+**Redaction:** two upstream call signs inside the removed patch are written `XX1XXX`. Nothing else is altered; the diffs are `git diff` output verbatim. `10.0.2.x` are QEMU's internal user-network addresses, `127.0.0.1` is loopback, `XX9TST-1` is a placeholder callsign.
 
 ---
 
 ## The report (code-review/code-report-s5.md, verbatim)
 
-# Code report s5 (A2) v2: stock MeshCom in QEMU, our files only
+# Code report s5 (A2) v3: stock MeshCom in QEMU, our files only
+
+**v3 delta** (gate 1, auditor 2b round 1: two findings):
+
+| finding | v2 | v3 |
+|---|---|---|
+| F1 `scripts/stop.sh` `is_qemu()` | any qemu-system-xtensa with an MTD `.bin` drive passed, so a stale `qemu.pid` naming another runner's guest got TERM/KILL | it must also carry this checkout's `-monitor unix:$RUN/monitor.sock` (b486e34a) |
+| F2 the reused-pid test | a `sleep 100` decoy only; the report claimed more | a decoy whose cmdline passes the generic predicate (asserted) but names another monitor socket must survive `stop.sh`; red-before 1 FAIL on the parent, 29/29 after; x86 `--main` 21/21 on b486e34a |
+| note | "no alignment needed" | narrowed (Controller integration) |
 
 **v2 delta** (after the second read, decided by the handler):
 
@@ -42,13 +50,15 @@ All runs on an x86_64 Linux host (Fedora 43), MeshCom f2b3a349, QEMU esp-develop
 | 6e49bcb1 | gates count one web 200 within a wait (c, e, h, j, l, b′) | gates | a --main run failed l's web step after the wait had seen 200 |
 | 63bd8d60 | report and packet v1 | — | — |
 | 6f5531f0 | the persisted-state check requires `--gps on` for `*-gpsd` (via `--pos`); test finish() bounded | quick: GPS off → rc 3, no marker; position never written | the new test on the parent's run.sh: 1 FAIL |
+| 386c056b | report and packet v2 | — | — |
+| b486e34a | stop.sh signals a QEMU only with this checkout's monitor socket | quick: a QEMU-like decoy with another monitor socket survives stop.sh | the new case on the parent's stop.sh: 1 FAIL (the decoy was signalled) |
 
 ## Evidence of record (HEAD 6e49bcb1)
 - `--main` 21/21 as expected (392 s): a, j, b ×2, c, c-xr ×2, d, f, g, h, i, e, l ×3.
 - `--controls --slow-l --slow-k2` 9/9 (390 s): controls a b c d e f g l, k2.
 - `--slow-b` 2/2 (333 s), `--slow-k` 2/2 (574 s).
 - Quick: test-apply-overlay 4/4, test-run-supervisor 25/25 (176 s; 27/27 on 6f5531f0), test-node-image 29 ok, test-node-efuse and test-setup-src pass.
-- On 6f5531f0 (x86): `--main` 21/21 again (370 s).
+- On 6f5531f0 (x86): `--main` 21/21 again (370 s). On b486e34a (x86): `--main` 21/21 (361 s); test-run-supervisor 29/29.
 - Lifecycle on a fresh node (98acdd33): verified after 46 s; `--setcall` → restart #1, web 200, no `WIFIAP starting`; stop.sh → run.sh rc 0, no QEMU left.
 
 | gate | its failing control (measured: the assertion failed) |
@@ -91,7 +101,7 @@ Harness defects found and fixed while writing the tests: a field index in gate b
 - Heat: 47.2–60.9 °C, `throttled=0x0` throughout. Exit state: the scratch directory removed, the box's meshcom stack stopped as found.
 
 ## Controller integration
-- First start on aarch64 53 s, on x86 46 s, against the controller's readiness timeout of 600 s for meshcom-qemu: no alignment needed.
+- First start on aarch64 (Pi 5) 53 s, on x86 46 s, against the controller's readiness timeout of 600 s for meshcom-qemu: no alignment needed on the Pi 5 and x86. The Pi Zero 2W (the slowest box) is measured in the 0.12.10 live row. `PROVISION_TIMEOUT` (900 s) still exceeds the controller's 600 s.
 
 ## Residual risks
 - **Torn read (with R5):** the hand-over task writes `node_ip`/`node_gw`/`node_subnet` from its own task while the main loop may read them for a display or a web page; a page could show a half-written address during a re-report. Cosmetic: no decision path reads these strings; no synchronisation is added.
@@ -126,10 +136,11 @@ The checker is built for the controller repository. Here: no CHANGELOG exists (N
    - readiness never stands without the netif (gates l, k; control l);
    - no W5500 call at boot (gate b);
    - stop ≠ restart, no marker after a failed or signalled provisioning (test-run-supervisor);
+   - stop.sh signals only this checkout's runner (the process holding `.run/run.lock`) and this checkout's guest (a qemu-system-xtensa with an MTD node image and `unix:$RUN/monitor.sock`); a reused pid, including another runner's QEMU, is not signalled (test-run-supervisor, two decoys);
    - provisioning only with verified persisted state (supervisor tests "MESH on → 3" and "GPS off → 3", gate j).
 3. **Failure classes:**
    - a signal during provisioning; a guest ignoring TERM (KILL after 10 s);
-   - a reused pid, a second runner, a stale `uart-latest.log`, a changed command list, rc 0 without the ack, a provisioning timeout (all in test-run-supervisor);
+   - a reused pid (a plain process, and another runner's QEMU), a second runner, a stale `uart-latest.log`, a changed command list, rc 0 without the ack, a provisioning timeout (all in test-run-supervisor);
    - a driver that never starts (gate k); a link loss (gate l); an unpaced UART (gate i).
    - The stubs model a process lifetime (TERM notes, ports served while alive).
 4. **Test rules:** red-before per fix commit (table); every gate asserts a token, a code or an rc, never a sentence; no unconditional pass; three gates without a natural control are named.
@@ -1162,18 +1173,18 @@ index 33872b20..ae4c2993 100755
  fi
 +exit 0
 diff --git a/scripts/stop.sh b/scripts/stop.sh
-index 05428d77..e503425e 100755
+index 05428d77..231aea67 100755
 --- a/scripts/stop.sh
 +++ b/scripts/stop.sh
-@@ -1,25 +1,41 @@
+@@ -1,25 +1,46 @@
  #!/usr/bin/env bash
  #
 -# stop.sh — stop ONLY the QEMU instance started by run.sh (exact recorded PID).
 +# stop.sh — stop the runner (scripts/run.sh) and its QEMU guest.
 +#
 +# A PID file is trusted only for a process that still is what it names: run.pid only if that process
-+# holds this checkout's .run/run.lock open, qemu.pid only if that process is qemu-system-xtensa using a
-+# node image of this runner. A stale or reused PID is never signalled; its file is removed.
++# holds this checkout's .run/run.lock open, qemu.pid only if that process is qemu-system-xtensa on a node
++# image with this checkout's monitor socket. A stale or reused PID is never signalled; its file is removed.
 +# EXIT CODE: 0, also when nothing runs.
  set -eu
 -
@@ -1185,7 +1196,12 @@ index 05428d77..e503425e 100755
 -PID="$(cat "$PIDFILE")"
 -[ -n "$PID" ] || { echo "[stop] empty pid file."; exit 0; }
 +is_runner() { [ -n "$1" ] && find "/proc/$1/fd" -maxdepth 1 -lname "$RUN/run.lock" 2>/dev/null | grep -q .; }
-+is_qemu() { [ -n "$1" ] && { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null | grep -q 'qemu-system-xtensa .*-drive file=.*\.bin,if=mtd'; }
++# A guest of THIS runner: qemu-system-xtensa with an MTD node image and this checkout's monitor socket
++# (run.sh passes -monitor unix:$RUN/monitor.sock); another runner's guest has its own socket.
++is_qemu() {
++	local c; c="$( { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null)" || return 1
++	printf '%s' "$c" | grep -q 'qemu-system-xtensa .*-drive file=.*\.bin,if=mtd' && printf '%s' "$c" | grep -qF "unix:$RUN/monitor.sock,"
++}
 +# stop_pid PID: TERM, up to 15 s, then KILL.
 +stop_pid() {
 +	kill -TERM "$1" 2>/dev/null || true

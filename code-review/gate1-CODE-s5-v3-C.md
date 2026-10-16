@@ -1,6 +1,6 @@
-# Gate 1, CODE v2: s5 runner — file C
+# Gate 1, CODE v3: s5 runner — file C
 
-Part of the packet `gate1-CODE-s5.md`; same request and redaction. The plan is the added file `plans/PLAN-s5-runner.md` below.
+Part of the packet `gate1-CODE-s5-v3.md`; same request and redaction. The plan is the added file `plans/PLAN-s5-runner.md` below.
 
 ## Diff 3 of 3: docs, plan, the removed patch (`git diff origin/main HEAD -- README.md STACK.md fixtures plans overlay/patches`)
 

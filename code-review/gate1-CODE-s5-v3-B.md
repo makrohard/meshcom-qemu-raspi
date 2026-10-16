@@ -1,6 +1,6 @@
-# Gate 1, CODE v2: s5 runner — file B
+# Gate 1, CODE v3: s5 runner — file B
 
-Part of the packet `gate1-CODE-s5.md`; same request and redaction.
+Part of the packet `gate1-CODE-s5-v3.md`; same request and redaction.
 
 ## The commits (full messages)
 
@@ -196,6 +196,20 @@ s5: the provisioning check also requires --gps on for a *-gpsd env
 verify_persisted() reads --pos over the console for a *-gpsd env and requires '...GPS: on' (bGPSON; --info has no GPS switch). Like the --info reply, the --pos reply (it carries the position) is held in a variable and never written. tests/test-run-supervisor.sh: a stub answering --pos with GPS: off -> rc 3, no marker; the position never reaches a log; finish() stops a runner still alive at its deadline (rc 124) instead of waiting forever.
 
 Red-before: the new test against the parent's run.sh: 1 FAIL ('a *-gpsd node whose --pos reads GPS: off'); here 27/27.
+
+### 386c056bfec1f25fa0375099e74b8702e2158937
+
+s5: code report and gate-1 packet v2
+
+After the second read: the GPS check of provisioning (6f5531f0), the aarch64 results (Pi 5: --main 21/21, --controls 7/7, first start 53 s), the controller-integration timing and the torn-read residual; the delta table is at the top of the report. The packet keeps its three files; the commit messages moved to file B for size.
+
+### b486e34a9c3698479c7293cb7ff75cfe88cf66b3
+
+s5: stop.sh signals a QEMU only with this checkout's monitor socket
+
+is_qemu() accepted any qemu-system-xtensa with an MTD .bin drive, so a stale qemu.pid naming another runner's guest got TERM and KILL. It now also requires -monitor unix:$RUN/monitor.sock (run.sh passes it with the absolute .run path). tests/test-run-supervisor.sh: a decoy whose cmdline passes the generic predicate (checked in the test) but names another monitor socket must survive stop.sh.
+
+Red-before: the new case against the parent's stop.sh: 1 FAIL (the decoy was signalled); here 29/29.
 
 ---
 
@@ -746,10 +760,10 @@ index 908f9774..06bb50c0 100755
  echo "FAILURES: $FAILS"; exit 1
 diff --git a/tests/test-run-supervisor.sh b/tests/test-run-supervisor.sh
 new file mode 100644
-index 00000000..ee7185b7
+index 00000000..80b87934
 --- /dev/null
 +++ b/tests/test-run-supervisor.sh
-@@ -0,0 +1,204 @@
+@@ -0,0 +1,215 @@
 +#!/usr/bin/env bash
 +#
 +# test-run-supervisor.sh — tests for scripts/run.sh as the guest's supervisor and provisioner, and for
@@ -942,7 +956,18 @@ index 00000000..ee7185b7
 +cp "$R/.run/run.pid" "$T/run.pid.real"; echo "$DECOY" > "$R/.run/run.pid"; echo "$DECOY" > "$R/.run/qemu.pid"
 +"$R/scripts/stop.sh" > "$T/stop2.out"; src=$?
 +check "stop.sh does not signal a reused pid (rc 0)" '[ "$src" = 0 ] && kill -0 "$DECOY" 2>/dev/null && grep -q "not this checkout" "$T/stop2.out"'
-+kill "$DECOY"; cp "$T/run.pid.real" "$R/.run/run.pid"
++kill "$DECOY"
++# Another runner's guest: a qemu-system-xtensa with a node image on its own MTD drive, but another
++# runner's monitor socket. A stale qemu.pid naming it must not be signalled.
++mkdir -p "$T/other"; printf '#!/usr/bin/env python3\nimport time\ntime.sleep(100)\n' > "$T/other/qemu-system-xtensa"; chmod +x "$T/other/qemu-system-xtensa"
++"$T/other/qemu-system-xtensa" -drive "file=$T/other/node.bin,if=mtd,format=raw" -monitor "unix:$T/other/monitor.sock,server=on,wait=off" & OTHERQ=$!
++sleep 0.5; tr '\0' ' ' < "/proc/$OTHERQ/cmdline" > "$T/other/cmdline"   # the decoy passes the generic predicate
++check "the decoy looks like a guest (qemu-system-xtensa, an MTD .bin drive)" 'grep -q "qemu-system-xtensa .*-drive file=.*\.bin,if=mtd" "$T/other/cmdline"'
++echo "$OTHERQ" > "$R/.run/qemu.pid"; echo 99999999 > "$R/.run/run.pid"
++"$R/scripts/stop.sh" > "$T/stop4.out"; src4=$?
++check "stop.sh does not signal another runner's QEMU named by a stale qemu.pid (rc 0)" '[ "$src4" = 0 ] && kill -0 "$OTHERQ" 2>/dev/null && grep -q "not a running guest" "$T/stop4.out"'
++kill "$OTHERQ" 2>/dev/null; wait "$OTHERQ" 2>/dev/null
++cp "$T/run.pid.real" "$R/.run/run.pid"; echo "$(pgrep -f "[q]emu-stub" | head -1)" > "$R/.run/qemu.pid"
 +"$R/scripts/status.sh" > "$T/status.out"; ssrc=$?
 +check "status.sh shows a running guest, rc 0" '[ "$ssrc" = 0 ]'
 +"$R/scripts/stop.sh" >/dev/null; finish
