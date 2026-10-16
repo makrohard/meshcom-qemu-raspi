@@ -1,4 +1,13 @@
-# Code report s5 (A2): stock MeshCom in QEMU, our files only
+# Code report s5 (A2) v2: stock MeshCom in QEMU, our files only
+
+**v2 delta** (after the second read, decided by the handler):
+
+| point | v1 | v2 |
+|---|---|---|
+| 1 GPS setting unverified | the persisted-state check covered Ethernet mode, mesh, extudp, gateway, web | for a `*-gpsd` env it also reads `--pos` and requires `...GPS: on` (6f5531f0); reply held in memory only; test: GPS off → rc 3, no marker; red-before 1 FAIL on the parent |
+| 2 aarch64 provisioning time | not measured | 53 s on the Pi 5 (first start: provisioning + check), 46 s on x86; LHPC's `readiness_timeout` for meshcom-qemu is 600 s: no alignment needed |
+| 3 torn read | in the plan's R1 only | stated as a residual below, no synchronisation code |
+| aarch64 | not run | Pi 5 (Debian trixie, aarch64): `--main` 21/21, `--controls` 7/7 on 63bd8d60 |
 
 Branch `cons/s5-r1`, base `main` c2335d12, plan `plans/PLAN-s5-runner.md` (design v5, gate 1 GREEN WITH NOTES, note applied).
 All runs on an x86_64 Linux host (Fedora 43), MeshCom f2b3a349, QEMU esp-develop-9.2.2-20260417 + `patches/qemu` (a `build-qemu.sh` build: binary sha256 15eb3620…, patch sha256 c1e223db…), bridge at the controller's pin 7c86c96, PlatformIO 6.1.19.
@@ -17,12 +26,15 @@ All runs on an x86_64 Linux host (Fedora 43), MeshCom f2b3a349, QEMU esp-develop
 | 041aa290 | the hand-over's log line from 5 s of uptime (publish time kept), a one-time UDP-open-failure line; gate b reads upstream's `[BOOT];ready;…;ip;1` | gate b | two --main runs: the line absent once per run (first boot / restart) with `ip;1` present |
 | f7454a78 | gate b waits for the line | gate b | a --main run failed b on the restart; its saved log shows the line |
 | 6e49bcb1 | gates count one web 200 within a wait (c, e, h, j, l, b′) | gates | a --main run failed l's web step after the wait had seen 200 |
+| 63bd8d60 | report and packet v1 | — | — |
+| 6f5531f0 | the persisted-state check requires `--gps on` for `*-gpsd` (via `--pos`); test finish() bounded | quick: GPS off → rc 3, no marker; position never written | the new test on the parent's run.sh: 1 FAIL |
 
 ## Evidence of record (HEAD 6e49bcb1)
 - `--main` 21/21 as expected (392 s): a, j, b ×2, c, c-xr ×2, d, f, g, h, i, e, l ×3.
 - `--controls --slow-l --slow-k2` 9/9 (390 s): controls a b c d e f g l, k2.
 - `--slow-b` 2/2 (333 s), `--slow-k` 2/2 (574 s).
-- Quick: test-apply-overlay 4/4, test-run-supervisor 25/25 (176 s), test-node-image 29 ok, test-node-efuse and test-setup-src pass.
+- Quick: test-apply-overlay 4/4, test-run-supervisor 25/25 (176 s; 27/27 on 6f5531f0), test-node-image 29 ok, test-node-efuse and test-setup-src pass.
+- On 6f5531f0 (x86): `--main` 21/21 again (370 s).
 - Lifecycle on a fresh node (98acdd33): verified after 46 s; `--setcall` → restart #1, web 200, no `WIFIAP starting`; stop.sh → run.sh rc 0, no QEMU left.
 
 | gate | its failing control (measured: the assertion failed) |
@@ -58,8 +70,20 @@ Harness defects found and fixed while writing the tests: a field index in gate b
 - The slow cases are split into four modes so that each fits one foreground run.
 - shellcheck in CI covers the files this branch added or changed (warning level). The untouched scripts have pre-existing findings (fetch-qemu.sh, lib-publish.sh, test-build-qemu.sh, test-setup-src.sh).
 
+## aarch64 (Pi 5, lhpc-0ae1, Debian trixie), on 63bd8d60, 2026-10-16 01:47–02:10Z
+- The box's managed QEMU (marker: source 40edccac, patch sha256 c1e223db) and bridge (7c86c96); PlatformIO 6.1.19 in a scratch venv.
+- `--main` 21/21 as expected: four env builds of about 2 min each; first-start provisioning and the persisted-state check took 53 s (provisioning log 01:57:48Z → marker 01:58:41Z); gate l recovery reported 0 s after `set_link on`, web 200 1 s later.
+- `--controls` 7/7 as expected. The slow modes were not run on aarch64.
+- Heat: 47.2–60.9 °C, `throttled=0x0` throughout. Exit state: the scratch directory removed, the box's meshcom stack stopped as found.
+
+## Controller integration
+- First start on aarch64 53 s, on x86 46 s, against the controller's readiness timeout of 600 s for meshcom-qemu: no alignment needed.
+
+## Residual risks
+- **Torn read (with R5):** the hand-over task writes `node_ip`/`node_gw`/`node_subnet` from its own task while the main loop may read them for a display or a web page; a page could show a half-written address during a re-report. Cosmetic: no decision path reads these strings; no synchronisation is added.
+
 ## Not covered yet
-- aarch64: not run (the Pi 5 run and the lhpc-binaries smoke on the candidate are the next step).
+- aarch64 slow modes (b′, k, k2, l control) and the lhpc-binaries smoke on the candidate controller commit (the pin-move qualification).
 - The weekly workflow has never run (the branch was not pushed before this report).
 - The loraham backend with RX into the node, a live gpsd feed, the controller's post-step window on a Pi: the 0.12.10 live row.
 - The other three envs are built, not booted.
@@ -88,7 +112,7 @@ The checker is built for the controller repository. Here: no CHANGELOG exists (N
    - readiness never stands without the netif (gates l, k; control l);
    - no W5500 call at boot (gate b);
    - stop ≠ restart, no marker after a failed or signalled provisioning (test-run-supervisor);
-   - provisioning only with verified persisted state (supervisor test "MESH on → 3", gate j).
+   - provisioning only with verified persisted state (supervisor tests "MESH on → 3" and "GPS off → 3", gate j).
 3. **Failure classes:**
    - a signal during provisioning; a guest ignoring TERM (KILL after 10 s);
    - a reused pid, a second runner, a stale `uart-latest.log`, a changed command list, rc 0 without the ack, a provisioning timeout (all in test-run-supervisor);
