@@ -26,6 +26,8 @@ static volatile bool s_got_ip = false;
 // connectivity only. The default qemu-headless paths keep using s_got_ip/qemuNetworkReady().
 static volatile bool s_got_ip_event = false;
 static bool s_started = false;
+static volatile bool s_link_up = false;   // between ETHERNET_EVENT_CONNECTED and DISCONNECTED/STOP
+static volatile bool s_dhcp_seen = false; // a GOT_IP happened in this boot: the static fallback is start-up only
 static uint32_t s_start_ms = 0;
 static bool s_static_applied = false;
 static esp_eth_handle_t s_eth_handle = nullptr;
@@ -38,6 +40,7 @@ static void eth_event_handler(void *, esp_event_base_t, int32_t event_id, void *
     switch (event_id) {
     case ETHERNET_EVENT_CONNECTED:
         Serial.println("[QEMU]...OpenETH link connected");
+        s_link_up = true;
         // Belt-and-suspenders: ensure the DHCP client is running on the eth netif,
         // in case the glue auto-start did not run in this (non-Wi-Fi) Arduino context.
         if (s_eth_netif) {
@@ -52,6 +55,7 @@ static void eth_event_handler(void *, esp_event_base_t, int32_t event_id, void *
         break;
     case ETHERNET_EVENT_DISCONNECTED:
         Serial.println("[QEMU]...OpenETH link disconnected");
+        s_link_up = false;
         // Link loss: neither readiness survives it. qemuNetworkGetIp() returns false while s_got_ip is
         // false, so the stored address is not exposed until the link and an address return.
         s_got_ip = false;
@@ -62,6 +66,7 @@ static void eth_event_handler(void *, esp_event_base_t, int32_t event_id, void *
         break;
     case ETHERNET_EVENT_STOP:
         Serial.println("[QEMU]...OpenETH driver stopped");
+        s_link_up = false;
         s_got_ip = false;
         s_got_ip_event = false;
         break;
@@ -77,6 +82,7 @@ static void got_ip_event_handler(void *, esp_event_base_t, int32_t, void *event_
     Serial.printf("[QEMU]...OpenETH GOT_IP ip=" IPSTR " mask=" IPSTR " gw=" IPSTR "\n",
                   IP2STR(&s_ip_info.ip), IP2STR(&s_ip_info.netmask), IP2STR(&s_ip_info.gw));
     s_got_ip = true;
+    s_dhcp_seen = true;
     // Genuine IP event: this is the ONLY place strict event-readiness becomes true.
     s_got_ip_event = true;
 }
@@ -93,10 +99,6 @@ bool qemuNetworkStart()
 {
     if (s_started)
         return true;
-#ifdef QEMU_TEST_NO_OPENETH
-    // Test build only (tests/test-boot-gates.sh, gate k): the driver never starts.
-    return false;
-#endif
 
     esp_err_t e = esp_netif_init();
     if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) {
@@ -108,6 +110,10 @@ bool qemuNetworkStart()
         Serial.printf("[QEMU]...esp_event_loop_create_default failed: %d\n", (int)e);
         return false;
     }
+#ifdef QEMU_TEST_NO_OPENETH
+    // Test build only (tests/test-boot-gates.sh, gate k): the TCP/IP stack is up, the driver never starts.
+    return false;
+#endif
 
     esp_netif_inherent_config_t base_cfg = ESP_NETIF_INHERENT_DEFAULT_ETH();
     esp_netif_config_t netif_cfg = { &base_cfg, nullptr, ESP_NETIF_NETSTACK_DEFAULT_ETH };
@@ -164,7 +170,9 @@ bool qemuNetworkStart()
 #define QEMU_DHCP_TIMEOUT_MS 8000
 static void qemuMaybeApplyStatic()
 {
-    if (s_got_ip || s_static_applied || !s_started || !s_eth_netif)
+    // Start-up only (never after a DHCP lease in this boot: a reconnect gets its lease again), and only
+    // while the link is up: without it the address would claim a network that is not there.
+    if (s_got_ip || s_static_applied || s_dhcp_seen || !s_started || !s_eth_netif || !s_link_up)
         return;
     if (millis() - s_start_ms < QEMU_DHCP_TIMEOUT_MS)
         return;
