@@ -115,13 +115,14 @@ if [[ "$MODES" == *" --main "* ]]; then
 	pre_ap="$(grep -ac 'WIFIAP starting' "$B1")"
 	console "--setcall $CALL" 'Call:\S+ Short:\S+ set' > "$G/setcall.txt"
 	waitfor 'grep -q "restart #1" "$G/run.log"' 180
-	waitfor '[ "$(web)" = 200 ]' 180
+	waitfor '[ "$(web)" = 200 ]' 180; jweb=$?          # the emulated web server is slow: one 200 counts
 	B2="$(UARTLOG)"
 	gate "j  --setcall -> one supervised restart, AP flag off, web 200, callsign kept" \
-		'grep -q "Call:" "$G/setcall.txt" && [ "$pre_ap" -ge 1 ] && [ "$(grep -ac "WIFIAP starting" "$B2")" = 0 ] && [ "$(web)" = 200 ] && grep -aq "BLE-Name <.*-${CALL%-*}-" "$B2"'
+		'grep -q "Call:" "$G/setcall.txt" && [ "$pre_ap" -ge 1 ] && [ "$(grep -ac "WIFIAP starting" "$B2")" = 0 ] && [ "$jweb" = 0 ] && grep -aq "BLE-Name <.*-${CALL%-*}-" "$B2"'
 	waitfor 'grep -aq "ethmode: IP .* reported" "$B2"' 60
 	gate "b  [BOOT];ready with ip;1, no [ETH] init, address published before it (restart)" 'ready_with_address "$B2"'
-	gate "c  web 200, console banner and authenticated" '[ "$(web)" = 200 ] && console_ok && grep -aq "Client authenticated" "$B2"'
+	waitfor '[ "$(web)" = 200 ]' 30; cweb=$?
+	gate "c  web 200, console banner and authenticated" '[ "$cweb" = 0 ] && console_ok && grep -aq "Client authenticated" "$B2"'
 	sleep 45; cp "$G/tap.log" "$G/tap-control.log"
 	console "--sendpos" > /dev/null; sleep 20
 	gate "c-xr  CONFIG_RESULT, and a TX_REQUEST with payload0 0x21 after --sendpos" \
@@ -136,7 +137,8 @@ if [[ "$MODES" == *" --main "* ]]; then
 	info="$(console "--info" '\.\.\.MESH (?:on|off)|\.\.\.EXTUDP (?:on|off)|Gateway (?:on|off)')"
 	gate "g  --info: MESH off, EXTUDP off, Gateway off" '[ "$info" = "...MESH off | ...EXTUDP off | Gateway off" ]'
 	t0=$(date +%s); scode="$(web "/?page=spectrum" 60)"; st=$(( $(date +%s) - t0 ))
-	gate "h  spectrum page within 60 s, then web 200" '[ "$scode" = 200 ] && [ "$st" -le 60 ] && [ "$(web)" = 200 ]'
+	waitfor '[ "$(web)" = 200 ]' 30; hweb=$?
+	gate "h  spectrum page within 60 s, then web 200" '[ "$scode" = 200 ] && [ "$st" -le 60 ] && [ "$hweb" = 0 ]'
 	kill "$GP" 2>/dev/null; GP=""
 	python3 -I - "$ROOT/.run/gps-uart1.sock" "$ROOT/fixtures/gps/valid_fix.nmea" > "$G/blast.txt" 2>&1 <<'PY' &
 import socket, sys, time
@@ -153,17 +155,19 @@ PY
 	gate "i  UART1 written unpaced for 90 s: web and console answer at all 8 probes" '[ "$iok" = 8 ]'
 	console "--reboot" > /dev/null
 	waitfor 'grep -q "restart #2" "$G/run.log"' 180
-	waitfor '[ "$(web)" = 200 ]' 180
-	gate "e  --reboot -> guest reset -> restart #2, web 200" 'grep -q "guest reset after .* restart #2" "$G/run.log" && [ "$(web)" = 200 ]'
+	waitfor '[ "$(web)" = 200 ]' 180; eweb=$?
+	gate "e  --reboot -> guest reset -> restart #2, web 200" 'grep -q "guest reset after .* restart #2" "$G/run.log" && [ "$eweb" = 0 ]'
 	B3="$(UARTLOG)"; waitfor 'grep -aq "ethmode: IP .* reported" "$B3"' 120
 	monitor "set_link net0 off"; t0=$(date +%s)
 	waitfor 'grep -aq "readiness withdrawn" "$B3"' 10; wt=$(( $(date +%s) - t0 ))
 	down_web="$(web / 5)"
 	gate "l  set_link off: readiness withdrawn within 10 s, web from the host fails" 'grep -aq "readiness withdrawn" "$B3" && [ "$wt" -le 10 ] && [ "$down_web" != 200 ]'
 	n0="$(grep -ac 'ethmode: IP .* reported' "$B3")"
-	monitor "set_link net0 on"
-	waitfor '[ "$(grep -ac "ethmode: IP .* reported" "$B3")" -gt "$n0" ] && [ "$(web)" = 200 ]' 30
-	gate "l  set_link on: reported again and web 200 within 30 s" '[ "$(grep -ac "ethmode: IP .* reported" "$B3")" -gt "$n0" ] && [ "$(web)" = 200 ]'
+	monitor "set_link net0 on"; t0=$(date +%s)
+	waitfor '[ "$(grep -ac "ethmode: IP .* reported" "$B3")" -gt "$n0" ]' 30; rt=$(( $(date +%s) - t0 ))
+	gate "l  set_link on: the address reported again within 30 s (${rt} s)" '[ "$(grep -ac "ethmode: IP .* reported" "$B3")" -gt "$n0" ] && [ "$rt" -le 30 ]'
+	t0=$(date +%s); waitfor '[ "$(web / 5)" = 200 ]' 60; lweb=$?; wt2=$(( $(date +%s) - t0 ))
+	gate "l  ... and the web page answers 200 again (${wt2} s after the report)" '[ "$lweb" = 0 ]'
 	cp "$B1" "$G/boot1.log"; cp "$B2" "$G/boot2.log"; cp "$B3" "$G/boot3.log"
 	stop_all
 fi
@@ -230,7 +234,8 @@ if [[ "$MODES" == *" --slow-b "* ]]; then
 	mkdir -p "$G/node-b2"; cp "$PROV" "$PROV.efuse" "$PROV.provisioned" "$G/node-b2/" 2>/dev/null
 	start_node "$G/node-b2/node-flash.bin"; waitfor '[ "$(web)" = 200 ]' 300
 	waitfor 'grep -aq "\[ETH\] DHCP IP" "$(UARTLOG)"' 400
-	gate "b' a flag clear -> [ETH] DHCP IP via the stand-in, web 200" 'grep -aq "TEST: node_hasIPaddress cleared" "$(UARTLOG)" && grep -aq "\[ETH\] DHCP IP" "$(UARTLOG)" && [ "$(web)" = 200 ]'
+	waitfor '[ "$(web)" = 200 ]' 30; bweb=$?
+	gate "b' a flag clear -> [ETH] DHCP IP via the stand-in, web 200" 'grep -aq "TEST: node_hasIPaddress cleared" "$(UARTLOG)" && grep -aq "\[ETH\] DHCP IP" "$(UARTLOG)" && [ "$bweb" = 0 ]'
 	stop_all
 	# b' control: without the stand-in headers the build fails
 	mv "$FW/variants/qemu-headless/ETHClass2.h" "$G/"; build "$ENV"; src=$?
