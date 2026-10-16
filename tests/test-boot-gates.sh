@@ -243,7 +243,10 @@ if [[ "$MODES" == *" --controls "* ]]; then
 		start_node "$NODE" "$ROOT/scripts/.run-noreboot.sh"
 		if setup "e: the node without -no-reboot answers" 'waitfor '"'"'[ "$(web)" = 200 ] && console_ok'"'"' 300'; then
 			console "--reboot" > /dev/null; sleep 60
-			setup "e: the runner still runs after --reboot (QEMU reset in place)" 'kill -0 "$RP"' \
+			# Without -no-reboot the reset stays inside QEMU and wedges in the ROM: its ROM line is the evidence
+			# that --reboot reached the guest (upstream's [BOOT] RESET_REASON line never comes after it).
+			setup "e: the copy has no -no-reboot, the runner still runs, the guest reset (rst:0xc in its UART log)" \
+				'! grep -q -- -no-reboot "$ROOT/scripts/.run-noreboot.sh" && kill -0 "$RP" && grep -aq "rst:0xc (SW_CPU_RESET)" "$(UARTLOG)"' \
 				&& control "e  (no -no-reboot)" 'grep -q "restart #1" "$G/run.log"'
 		fi
 		stop_all; rm -f "$ROOT/scripts/.run-noreboot.sh"
