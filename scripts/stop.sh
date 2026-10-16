@@ -4,7 +4,8 @@
 #
 # A PID file is trusted only for a process that still is what it names: run.pid only if that process
 # holds this checkout's .run/run.lock open, qemu.pid only if that process is qemu-system-xtensa on a node
-# image with this checkout's monitor socket. A stale or reused PID is never signalled; its file is removed.
+# image with this checkout's monitor socket. A PID whose process fails that check is not signalled; its file
+# is removed.
 # The check is repeated before a SIGKILL (stop_pid).
 # EXIT CODE: 0, also when nothing runs.
 set -eu
@@ -24,9 +25,9 @@ start_of() {
 	# shellcheck disable=SC2086 # the fields after the command name, split on purpose
 	set -- ${s##*) }; printf '%s' "${20}"
 }
-# stop_pid PID CHECK: TERM, up to 15 s, then KILL only while PID is still the process CHECK accepted (the
-# same start time and CHECK still true). A PID that ended and was reused, or a process that became
-# something else, is not killed.
+# stop_pid PID CHECK: TERM, up to 15 s, then KILL only if PID is still the process CHECK accepted, revalidated
+# immediately before the SIGKILL (the same start time and CHECK still true): a reuse or a changed process
+# observed at that revalidation is not killed. The revalidation and the numeric kill stay two steps.
 stop_pid() {
 	local st; st="$(start_of "$1")"
 	kill -TERM "$1" 2>/dev/null || true

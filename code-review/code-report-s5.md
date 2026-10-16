@@ -4,7 +4,7 @@
 
 | finding | v3 | v4 |
 |---|---|---|
-| F1 kill escalation | stop.sh `stop_pid` and run.sh `stop_qemu` sent SIGKILL to the bare PID after the grace wait | SIGKILL only while the PID is still the checked process: the same start time (`/proc/PID/stat` field 22) and the same predicate (stop.sh: `is_runner`/`is_qemu`; run.sh: its own monitor socket in the argv); otherwise "not killed". Tests: a runner that drops run.lock and becomes another program during stop.sh's wait survives; a guest whose TERM turns it into another program survives run.sh's stop. Red-before: both FAIL on d1b73c84 (it was killed) |
+| F1 kill escalation | stop.sh `stop_pid` and run.sh `stop_qemu` sent SIGKILL to the bare PID after the grace wait | the PID is revalidated immediately before the SIGKILL: the same start time (`/proc/PID/stat` field 22) and the same predicate (stop.sh: `is_runner`/`is_qemu`; run.sh: its own monitor socket in the argv); otherwise "not killed". Tests: a runner that drops run.lock and becomes another program during stop.sh's wait survives; a guest whose TERM turns it into another program survives run.sh's stop. Red-before: both FAIL on d1b73c84 (it was killed) |
 | F2 stale marker | a marker for another command list stayed during provisioning; a failure or TERM left it | removed before provisioning starts. Tests: an existing image with another list's marker, then a provisioning failure (rc 3) and a TERM (rc 0): no marker. Red-before: both FAIL on d1b73c84 |
 | F3 controls passing on a failed fixture | readiness and console reads were not checked; a failed read satisfied a negative assertion | `setup()`: a control is judged only after its preparation held, otherwise FAIL. Readiness for every control node; g: baseline MESH off, then `--info` reads MESH on; d: `--pos` answered with a SAT line; f: restart #1 + web 200, then `--info` reads MTU 1500; e: the runner still runs after `--reboot`; c: web 200 with the console off; a and slow l: the history extraction (and apply/build); b: build rc 0, run.sh rc 3; slow b′/k/k2: their builds; b′ control: the build log names ETHClass2.h; l control: web fails with the link down |
 | F4 gate i without load | the writer's exit ignored; probes could run past the 90 s load | `uart_load`: writer rc 0, bytes > 0, the writer still running after the last probe (8 probes, 8 s apart), 8 answers. New control i: a failed writer (no such socket) → the gate's assertion fails |
@@ -12,6 +12,7 @@
 | F6 shallow checkout | `actions/checkout` depth 1; the controls read c2335d12 | `fetch-depth: 0`; a missing historical file is a setup FAIL. First arm dispatch: not possible before the merge (GitHub: "workflow boot-gates.yml not found on the default branch", HTTP 404 on the dispatch at fe9b051a); it runs as the first dispatch after the merge |
 | README | "aarch64: not yet run" | the Pi 5 `--main` result; README 103 lines |
 | b/k/l wording | the plan said web 200 within 30 s | the plan now says what the code does: reported again within 30 s, then web 200 within a further 60 s |
+| v4.2 wording (gate 2, auditor 2c round 1, F1) | comments said a reused PID is "never killed" | "revalidated immediately before the SIGKILL"; a reuse observed at that revalidation is not killed; the revalidation and the numeric kill stay two steps (comments and this report; no code) |
 
 
 **v3 delta** (gate 1, auditor 2b round 1: two findings):
@@ -144,7 +145,7 @@ The checker is built for the controller repository. Here: no CHANGELOG exists (N
    - readiness never stands without the netif (gates l, k; control l);
    - no W5500 call at boot (gate b);
    - stop ≠ restart, no marker after a failed or signalled provisioning (test-run-supervisor);
-   - stop.sh signals only this checkout's runner (the process holding `.run/run.lock`) and this checkout's guest (a qemu-system-xtensa with an MTD node image and `unix:$RUN/monitor.sock`); a reused pid, including another runner's QEMU, is not signalled (test-run-supervisor, two decoys);
+   - stop.sh signals only this checkout's runner (the process holding `.run/run.lock`) and this checkout's guest (a qemu-system-xtensa with an MTD node image and `unix:$RUN/monitor.sock`); a pid whose process fails the check, including another runner's QEMU, is not signalled (test-run-supervisor, two decoys); the check before a SIGKILL detects a reuse observed at that revalidation, and the revalidation and the numeric kill stay two steps (no pidfd);
    - provisioning only with verified persisted state (supervisor tests "MESH on → 3" and "GPS off → 3", gate j).
 3. **Failure classes:**
    - a signal during provisioning; a guest ignoring TERM (KILL after 10 s, only while it is still that guest);

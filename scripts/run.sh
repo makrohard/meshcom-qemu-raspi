@@ -159,7 +159,8 @@ is_guest() {
 	[ -n "$QSTART" ] && [ "$(start_of "$QPID")" = "$QSTART" ] \
 		&& { tr '\0' ' ' < "/proc/$QPID/cmdline"; } 2>/dev/null | grep -qF "unix:$RUN/monitor.sock,"
 }
-# stop_qemu: TERM, 10 s, then KILL only while QPID is still that QEMU (a reused PID is never killed).
+# stop_qemu: TERM, 10 s, then KILL only if QPID is still that QEMU, revalidated immediately before the SIGKILL
+# (is_guest): a reuse observed at that revalidation is not killed. The check and the numeric kill stay two steps.
 stop_qemu() {
 	[ -n "$QPID" ] || return 0
 	kill -TERM "$QPID" 2>/dev/null || true
