@@ -314,5 +314,26 @@ if [ -f "$work/configure.rec" ] && grep -q -- "^args=--prefix=$relr/qemu/qemu " 
 	pass "a relative destination reaches configure with the absolute prefix $relr/qemu/qemu"
 else bad "relative destination: configure not reached with an absolute prefix"; cat "$work/configure.rec" >&2 2>/dev/null; tail -n 3 "$work/out.log" >&2; fi
 
+# inode preflight: a stub df answers `df -Pi` with a given inode total and free count (the real df serves
+# everything else). A total of 0 (dynamic inodes: btrfs, zfs) skips the check, as on the maintainer's
+# btrfs /home; a reported total keeps it (ext4: too few free inodes still refuses).
+dfb="$work/dfbin"; mkdir -p "$dfb"; realdf="$(command -v df)"
+cat > "$dfb/df" <<DFSTUB
+#!/bin/sh
+case " \$* " in *" -Pi "*) printf 'Filesystem Inodes IUsed IFree IUse%% Mounted on\\n/dev/stub %s 0 %s - /\\n' "\$STUB_ITOTAL" "\$STUB_IFREE"; exit 0 ;; esac
+exec "$realdf" "\$@"
+DFSTUB
+chmod +x "$dfb/df"
+d15="$work/dyninodes/x"
+STUB_ITOTAL=0 STUB_IFREE=0 PATH="$dfb:$PATH" _provision "$d15"; rc=$?
+if [ "$rc" -eq 0 ] && _valid "$d15" && grep -q "inode check skipped" "$work/out.log"; then
+	pass "dynamic inodes (total 0, as btrfs): the inode check is skipped and the build publishes"
+else bad "dynamic inodes refused (rc $rc)"; tail -n 3 "$work/out.log" >&2; fi
+d16="$work/fewinodes/x"
+STUB_ITOTAL=100000 STUB_IFREE=10 PATH="$dfb:$PATH" _provision "$d16"; rc=$?
+if [ "$rc" -ne 0 ] && grep -q "free inodes under" "$work/out.log" && [ ! -f "$d16/.lhpc-qemu-built" ]; then
+	pass "a reported inode total with too few free inodes still refuses (rc $rc)"
+else bad "too few free inodes not refused (rc $rc)"; tail -n 3 "$work/out.log" >&2; fi
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "FAILURES" >&2; fi
 exit "$fail"

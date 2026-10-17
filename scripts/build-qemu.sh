@@ -199,12 +199,17 @@ fi
 
 # ---- preflight: space + inodes + same-filesystem staging --------------------------------------------
 free_bytes() { df -PB1  "$1" 2>/dev/null | awk 'NR==2{print $4}'; }
-free_inodes(){ df -Pi   "$1" 2>/dev/null | awk 'NR==2{print $4}'; }
+inodes()     { df -Pi   "$1" 2>/dev/null | awk 'NR==2{print $2, $4}'; }   # total free
 if [ -n "$FAKE" ]; then MIN_BYTES=$((64*1024*1024)); MIN_INODES=2000
 else MIN_BYTES="${LHPC_QEMU_MIN_FREE_BYTES:-$((6*1024*1024*1024))}"; MIN_INODES="${LHPC_QEMU_MIN_FREE_INODES:-200000}"; fi
-fb="$(free_bytes "$PUB_PARENT")"; fi_="$(free_inodes "$PUB_PARENT")"
+fb="$(free_bytes "$PUB_PARENT")"; read -r it_ fi_ <<<"$(inodes "$PUB_PARENT")"
 [ -n "$fb" ] && [ "$fb" -ge "$MIN_BYTES" ] || { echo "ERROR: $TAG needs >= $MIN_BYTES free bytes under $PUB_PARENT (have ${fb:-0})" >&2; exit 1; }
-[ -n "$fi_" ] && [ "$fi_" -ge "$MIN_INODES" ] || { echo "ERROR: $TAG needs >= $MIN_INODES free inodes under $PUB_PARENT (have ${fi_:-0})" >&2; exit 1; }
+# A filesystem with dynamic inodes (btrfs, zfs) reports a total of 0: there is no inode limit to check.
+if [ "${it_:-}" = 0 ]; then
+	echo "[$TAG] $PUB_PARENT reports no inode total (dynamic inodes, e.g. btrfs): inode check skipped"
+else
+	[ -n "$fi_" ] && [ "$fi_" -ge "$MIN_INODES" ] || { echo "ERROR: $TAG needs >= $MIN_INODES free inodes under $PUB_PARENT (have ${fi_:-0})" >&2; exit 1; }
+fi
 
 # ---- staging (all temps scoped to the dest, under the SAME filesystem as the dest) ------------------
 WORK=""; STAGEROOT=""
