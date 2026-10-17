@@ -89,6 +89,10 @@ TAG="build-qemu"
 # ---- args -------------------------------------------------------------------------------------------
 DEST="${1:-}"
 [ -n "$DEST" ] || { echo "usage: build-qemu.sh <destination> [--link-gate <path>]" >&2; exit 2; }
+# A relative destination is taken from the working directory: the prefix, the staging path and the
+# configure call need it absolute (the build cd's into its work tree). No symlink is resolved, so the
+# symlinked-destination refusal below still judges the path as given.
+case "$DEST" in /*) ;; *) DEST="$PWD/$DEST" ;; esac
 shift
 HERE="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LINK_GATE="$HERE/meshtastic-link-gate.sh"

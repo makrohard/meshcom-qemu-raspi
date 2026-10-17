@@ -279,5 +279,40 @@ if [ "$rc" -eq 0 ] && _valid "$dg" && [ "$rcf" -ne 0 ] && [ ! -f "$dgf/.lhpc-qem
 	pass "no --link-gate: the shipped gate passes a clean build (rc 0) and a failing one refuses (rc $rcf)"
 else bad "no --link-gate: shipped gate not used (rc $rc, failing-gate rc $rcf)"; tail -n 5 "$work/out.log" >&2; fi
 
+# relative destination: `scripts/build-qemu.sh qemu` from a working directory publishes under that
+# directory, as an absolute one does (it once failed: the prefix and staging paths assumed an absolute dest)
+rel="$work/rel"; mkdir -p "$rel"
+( cd "$rel" && LHPC_QEMU_FAKE_BUILD="$FAKE_GOOD" LHPC_QEMU_SMOKE_SECS=3 \
+	bash "$BUILD" qemu --link-gate "$GATE" ) >"$work/out.log" 2>&1; rc=$?
+if [ "$rc" -eq 0 ] && _valid "$rel/qemu" && [ "$(_leftovers "$rel/qemu")" -eq 0 ]; then
+	pass "a relative destination publishes under the working directory (rc 0, valid, no leftovers)"
+else bad "relative destination failed (rc $rc)"; tail -n 5 "$work/out.log" >&2; fi
+
+# relative destination, the REAL build path up to configure: a stub git "clones" a tree whose configure
+# records its arguments, then stops the build. configure must be reached and get an
+# absolute prefix under the working directory (with a relative dest it once got `--prefix=qemu/qemu` and
+# "…/qemu/configure: No such file or directory", because the build cd's before calling it).
+rb="$work/realbin"; mkdir -p "$rb"
+printf '#!/bin/sh\necho 1.7.0\n' > "$rb/meson"; chmod +x "$rb/meson"
+cat > "$work/configure.stub" <<'CFGSTUB'
+#!/bin/sh
+echo "args=$*" > "$REC"
+exit 1
+CFGSTUB
+cat > "$rb/git" <<GITSTUB
+#!/bin/sh
+case "\$1" in
+	clone) for a in "\$@"; do d="\$a"; done; mkdir -p "\$d"; cp "$work/configure.stub" "\$d/configure"; chmod +x "\$d/configure" ;;
+	-C) [ "\$3" = rev-parse ] && echo $COMMIT ;;
+esac
+exit 0
+GITSTUB
+chmod +x "$rb/git"
+relr="$work/relreal"; mkdir -p "$relr"; rm -f "$work/configure.rec"
+( cd "$relr" && REC="$work/configure.rec" PATH="$rb:$PATH" bash "$BUILD" qemu --link-gate "$GATE" ) >"$work/out.log" 2>&1
+if [ -f "$work/configure.rec" ] && grep -q -- "^args=--prefix=$relr/qemu/qemu " "$work/configure.rec"; then
+	pass "a relative destination reaches configure with the absolute prefix $relr/qemu/qemu"
+else bad "relative destination: configure not reached with an absolute prefix"; cat "$work/configure.rec" >&2 2>/dev/null; tail -n 3 "$work/out.log" >&2; fi
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "FAILURES" >&2; fi
 exit "$fail"
