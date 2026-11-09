@@ -19,10 +19,11 @@
 # (--node-image <path>; default .state/node-flash.bin in this repo).
 # The node's MAC, and with it MeshCom's node ID, comes from an efuse image that belongs to the node image
 # (<node image>.efuse), created once by scripts/node-efuse.sh.
-# A second guest on the same host (the test lab's two-node MeshCom row) runs with --instance <n>: host
+# A second guest on the same host (the test lab's two-node MeshCom row) runs with --instance <n> (0-99): host
 # ports 18083+10n / 12323+10n and .run/<n>/ (n = 0, the default, is exactly the single-guest layout), and
 # --xr-redirect <guest port>:<host port> sends the firmware's compiled-in bridge address
-# (10.0.2.2:<guest port>) to that instance's own bridge on the host.
+# (10.0.2.2:<guest port>) to that instance's own bridge on the host. --ports <web>:<console> gives the two
+# host ports explicitly (a caller with its own port plan, e.g. one guest per radio), instead of +10n.
 set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -37,21 +38,32 @@ ENV_NAME="qemu-headless"   # opt-in: --env qemu-headless-extradio for the extern
 NODE_IMAGE="$ROOT/.state/node-flash.bin"
 INSTANCE=0
 XR_REDIRECT=""
+PORTS=""
+PORTS_SET=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--qemu) QEMU_OVERRIDE="${2:?--qemu needs a path}"; shift 2 ;;
 		--env) ENV_NAME="${2:?--env needs a value}"; shift 2 ;;
 		--node-image) NODE_IMAGE="${2:?--node-image needs a path}"; shift 2 ;;
-		--instance) INSTANCE="${2:?--instance needs a number}"; shift 2 ;;
+		--instance) INSTANCE="${2-}"; shift $(($# > 1 ? 2 : 1)) ;;          # empty or missing: refused below (2)
 		--xr-redirect) XR_REDIRECT="${2:?--xr-redirect needs <guest port>:<host port>}"; shift 2 ;;
+		--ports) PORTS="${2-}"; PORTS_SET=1; shift $(($# > 1 ? 2 : 1)) ;;
 		*) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
-case "$INSTANCE" in [0-9]) ;; *) echo "ERROR: --instance must be 0-9, got: $INSTANCE" >&2; exit 2 ;; esac
-[ -z "$XR_REDIRECT" ] || [[ "$XR_REDIRECT" =~ ^[0-9]+:[0-9]+$ ]] || { echo "ERROR: --xr-redirect must be <guest port>:<host port>" >&2; exit 2; }
+valid_port() { [[ "$1" =~ ^[1-9][0-9]{3,4}$ ]] && [ "$1" -ge 1024 ] && [ "$1" -le 65535 ]; }
+[[ "$INSTANCE" =~ ^(0|[1-9][0-9]?)$ ]] || { echo "ERROR: --instance must be 0-99, got: $INSTANCE" >&2; exit 2; }
+# the guest port is the firmware's compiled-in one (1-65535), the host port a bridge's (1024-65535)
+[ -z "$XR_REDIRECT" ] || { [[ "$XR_REDIRECT" =~ ^([1-9][0-9]{0,4}):([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" -le 65535 ] \
+	&& valid_port "${BASH_REMATCH[2]}"; } || { echo "ERROR: --xr-redirect must be <guest port>:<host port>" >&2; exit 2; }
+WEB_PORT=$((18083 + 10 * INSTANCE)); CON_PORT=$((12323 + 10 * INSTANCE))
+if [ -n "$PORTS_SET" ]; then
+	WEB_PORT="${PORTS%%:*}"; CON_PORT="${PORTS#*:}"
+	{ valid_port "$WEB_PORT" && valid_port "$CON_PORT" && [ "$WEB_PORT" != "$CON_PORT" ]; } \
+		|| { echo "ERROR: --ports must be <web port>:<console port>, two different ports 1024-65535, got: $PORTS" >&2; exit 2; }
+fi
 RUN="$ROOT/.run"; [ "$INSTANCE" = 0 ] || RUN="$ROOT/.run/$INSTANCE"
 mkdir -p "$RUN"
-WEB_PORT=$((18083 + 10 * INSTANCE)); CON_PORT=$((12323 + 10 * INSTANCE))
 NIC="user,id=net0,model=open_eth,hostfwd=tcp:127.0.0.1:$WEB_PORT-:80,hostfwd=tcp:127.0.0.1:$CON_PORT-:2323"
 [ -z "$XR_REDIRECT" ] || NIC="$NIC,guestfwd=tcp:10.0.2.2:${XR_REDIRECT%%:*}-tcp:127.0.0.1:${XR_REDIRECT#*:}"
 FLASH="$SRC/.pio/build/$ENV_NAME/flash.bin"

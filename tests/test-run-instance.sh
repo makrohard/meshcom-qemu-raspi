@@ -4,9 +4,9 @@
 # --instance <n> moves the two host ports, the run directory and the persisted-state check to that
 # instance; n = 0 (the default) is exactly the single-guest QEMU argv (the whole vector is pinned);
 # --xr-redirect adds the guestfwd that sends the firmware's compiled-in bridge address to the
-# instance's own bridge. A stub stands in for qemu-system-xtensa: it provisions, then serves a console
+# instance's own bridge; --ports gives the two host ports explicitly (instance 12 here: 0-99). A stub stands in for qemu-system-xtensa: it provisions, then serves a console
 # and a web page on the ports run.sh gave it.
-# No QEMU, no network. Needs ports 12323/18083 and 12333/18093 free: never run it in parallel with
+# No QEMU, no network. Needs ports 12323/18083, 12333/18093 and 12456/18216 free: never run it in parallel with
 # tests/test-run-supervisor.sh (same ports, same stub name); boot-gates.yml runs them one after another.
 #
 # EXIT CODES: 0 = all cases passed (prints ALL PASS) · 1 = a failure (prints FAILURES).
@@ -21,6 +21,15 @@ FAILS=0
 ok()   { echo "  ok   $1"; }
 bad()  { echo "  FAIL $1"; FAILS=$((FAILS + 1)); }
 check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
+# wait_line FILE REGEX SECONDS: block until the runner writes a line matching REGEX (event-driven, no poll);
+# the tail feeding grep is killed and reaped afterwards, so none outlives the wait. rc 124 on timeout.
+wait_line() {
+	local fd tp rc
+	exec {fd}< <(exec tail -n +1 -F "$1" 2> /dev/null); tp=$!
+	timeout "$3" grep -m1 -qE -- "$2" <&"$fd"; rc=$?
+	kill "$tp" 2> /dev/null; wait "$tp" 2> /dev/null; exec {fd}<&-
+	return "$rc"
+}
 
 R="$T/repo"; mkdir -p "$R/scripts" "$R/.work/MeshCom-Firmware/.pio/build/qemu-headless"
 cp "$REPO"/scripts/{run.sh,stop.sh,node-image.sh,node-efuse.sh} "$R/scripts/"
@@ -134,7 +143,42 @@ check "plain stop.sh leaves instance 1's runner and guest running" \
 	'kill -0 "$R1" 2>/dev/null && kill -0 "$Q1" 2>/dev/null && ! kill -0 "$Q0" 2>/dev/null'
 "$R/scripts/stop.sh" --instance 1 > /dev/null 2>&1; wait "$R1" 2>/dev/null
 
+echo "== explicit ports (one guest per radio: the caller's port plan) on a two-digit instance"
+rm -f "$STUB_STATE"; : > "$STUB_ARGS"
+NIC12="user,id=net0,model=open_eth,hostfwd=tcp:127.0.0.1:18216-:80,hostfwd=tcp:127.0.0.1:12456-:2323,guestfwd=tcp:10.0.2.2:7000-tcp:127.0.0.1:7133"
+"$R/scripts/run.sh" --qemu "$T/qemu-stub" --node-image "$T/c/node.bin" --instance 12 --ports 18216:12456 \
+	--xr-redirect 7000:7133 > "$T/run12.out" 2>&1 &
+RUNNER=$!
+check "the runner reports its provisioning verified (not a timeout, not a failure)" \
+	'wait_line "$T/run12.out" "provisioning verified" 60'
+check "the wait leaves no tail behind" '! pgrep -a tail | grep -qF -- "$T/run12.out"'
+check "--ports: every launch uses exactly the given ports and the redirect" \
+	'grep -qx "$NIC12" "$STUB_ARGS" && ! grep -q "18203\|12443" "$STUB_ARGS"'
+check "--ports: the persisted-state check reads the given console port (marker written)" '[ -f "$T/c/node.bin.provisioned" ]'
+check "--instance 12: its pid files are in .run/12/" '[ -f "$R/.run/12/run.pid" ] && [ -f "$R/.run/12/qemu.pid" ]'
+check "--ports: it announces the given web port" 'grep -q "127.0.0.1:18216/" "$T/run12.out"'
+"$R/scripts/stop.sh" --instance 12 > "$T/stop12.out" 2>&1
+wait "$RUNNER" 2>/dev/null
+check "stop.sh --instance 12 stops that runner" '! kill -0 "$RUNNER" 2>/dev/null && grep -q "SIGTERM to the runner" "$T/stop12.out"'
+
 echo "== refusals"
+# A refusal exits 2 before QEMU starts; an input wrongly accepted would boot a guest, so each call is bounded (124).
+for bad in 1023:12456 18216 18216:18216 18216:12456,x 65536:12456 018216:12456; do
+	timeout 20 "$R/scripts/run.sh" --qemu "$T/qemu-stub" --ports "$bad" > "$T/badp.out" 2>&1; rc=$?
+	check "--ports $bad is refused" '[ "$rc" = 2 ] && grep -q "ports must be" "$T/badp.out"'
+done
+timeout 20 "$R/scripts/run.sh" --qemu "$T/qemu-stub" --ports "" > "$T/badpe.out" 2>&1; rc=$?
+check "an empty --ports is refused with 2" '[ "$rc" = 2 ] && grep -q "ports must be" "$T/badpe.out"'
+timeout 20 "$R/scripts/run.sh" --qemu "$T/qemu-stub" --instance "" > "$T/badie.out" 2>&1; rc=$?
+check "an empty --instance is refused with 2" '[ "$rc" = 2 ] && grep -q "instance must be 0-99" "$T/badie.out"'
+for bad in 7000:65536 7000:0 7000:1023 99999:7133 0:7133 07000:7133; do
+	timeout 20 "$R/scripts/run.sh" --qemu "$T/qemu-stub" --xr-redirect "$bad" > "$T/badx.out" 2>&1; rc=$?
+	check "--xr-redirect $bad is refused" '[ "$rc" = 2 ] && grep -q "xr-redirect must be" "$T/badx.out"'
+done
+timeout 20 "$R/scripts/run.sh" --qemu "$T/qemu-stub" --instance 100 > "$T/bad100.out" 2>&1; rc=$?
+check "instance 100 is refused" '[ "$rc" = 2 ] && grep -q "instance must be 0-99" "$T/bad100.out"'
+"$R/scripts/stop.sh" --instance 100 > /dev/null 2>&1; rc=$?
+check "stop.sh refuses instance 100 with 2" '[ "$rc" = 2 ]'
 "$R/scripts/run.sh" --qemu "$T/qemu-stub" --instance x > "$T/bad.out" 2>&1; rc=$?
 check "a non-digit instance is refused" '[ "$rc" = 2 ] && grep -q "instance must be" "$T/bad.out"'
 "$R/scripts/run.sh" --qemu "$T/qemu-stub" --xr-redirect 7000 > "$T/bad2.out" 2>&1; rc=$?
