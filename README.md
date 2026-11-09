@@ -7,7 +7,7 @@ talks to a `meshcom-loraham-bridge`, and through it to a real radio. Used by LoR
 firmware developers to boot MeshCom without hardware.
 
 ## Run
-Prerequisites: `git curl libslirp0`, PlatformIO (`pipx install platformio`), and a `qemu-system-xtensa`
+Prerequisites: `git curl libslirp0` (`socat` for `--xr-redirect`), PlatformIO (`pipx install platformio`), and a `qemu-system-xtensa`
 (`scripts/build-qemu.sh <dir>` builds the verified one; any on `PATH` is used otherwise).
 `scripts/meshtastic-link-gate.sh`, the gate that build checks the binary with, is a byte-identical copy of
 `lhpc/data/scripts/meshtastic-link-gate.sh` in [loraham-pi-control](https://github.com/makrohard/loraham-pi-control)
@@ -63,7 +63,9 @@ scripts/setup.sh && scripts/apply-overlay.sh && scripts/prepare-openeth.sh && sc
 | `qemu-headless-gpsd`, `qemu-headless-extradio-gpsd` | UART1 on `.run/gps-uart1.sock`, fed by `scripts/gps-relay.py` (`--mode fixture` from `fixtures/gps/`, or `--mode gpsd`, [docs/gpsd-host-setup.md](docs/gpsd-host-setup.md)); start the relay before the node |
 
 Pass the same `--env` to `build.sh` and `run.sh`. `10.0.2.2` is QEMU's address for the host; a bridge bound
-to `127.0.0.1` is reachable there. The full daemon + bridge + QEMU stack: [STACK.md](STACK.md).
+to `127.0.0.1` is reachable there. Several guests, each with its own bridge: build with `XR_HOST=10.0.2.100` and run
+each with `--xr-redirect <XR_PORT>:<its bridge port>`; QEMU runs `socat` for every connection the firmware opens there.
+The full daemon + bridge + QEMU stack: [STACK.md](STACK.md).
 
 ## Tests
 - Quick, no QEMU: `tests/test-apply-overlay.sh`, `tests/test-run-supervisor.sh`, `tests/test-node-image.sh`,

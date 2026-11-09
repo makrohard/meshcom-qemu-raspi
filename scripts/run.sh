@@ -21,8 +21,8 @@
 # (<node image>.efuse), created once by scripts/node-efuse.sh.
 # A second guest on the same host (the test lab's two-node MeshCom row) runs with --instance <n> (0-99): host
 # ports 18083+10n / 12323+10n and .run/<n>/ (n = 0, the default, is exactly the single-guest layout), and
-# --xr-redirect <guest port>:<host port> sends the firmware's compiled-in bridge address
-# (10.0.2.2:<guest port>) to that instance's own bridge on the host. --ports <web>:<console> gives the two
+# --xr-redirect <guest port>:<host port> sends the firmware's external-radio address
+# (10.0.2.100:<guest port>, a firmware built with XR_HOST=10.0.2.100) to that instance's own bridge on the host. --ports <web>:<console> gives the two
 # host ports explicitly (a caller with its own port plan, e.g. one guest per radio), instead of +10n.
 set -eu
 
@@ -56,6 +56,7 @@ valid_port() { [[ "$1" =~ ^[1-9][0-9]{3,4}$ ]] && [ "$1" -ge 1024 ] && [ "$1" -l
 # the guest port is the firmware's compiled-in one (1-65535), the host port a bridge's (1024-65535)
 [ -z "$XR_REDIRECT" ] || { [[ "$XR_REDIRECT" =~ ^([1-9][0-9]{0,4}):([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" -le 65535 ] \
 	&& valid_port "${BASH_REMATCH[2]}"; } || { echo "ERROR: --xr-redirect must be <guest port>:<host port>" >&2; exit 2; }
+[ -z "$XR_REDIRECT" ] || command -v socat >/dev/null 2>&1 || { echo "ERROR: --xr-redirect needs socat (apt install socat)" >&2; exit 1; }
 WEB_PORT=$((18083 + 10 * INSTANCE)); CON_PORT=$((12323 + 10 * INSTANCE))
 if [ -n "$PORTS_SET" ]; then
 	WEB_PORT="${PORTS%%:*}"; CON_PORT="${PORTS#*:}"
@@ -65,7 +66,14 @@ fi
 RUN="$ROOT/.run"; [ "$INSTANCE" = 0 ] || RUN="$ROOT/.run/$INSTANCE"
 mkdir -p "$RUN"
 NIC="user,id=net0,model=open_eth,hostfwd=tcp:127.0.0.1:$WEB_PORT-:80,hostfwd=tcp:127.0.0.1:$CON_PORT-:2323"
-[ -z "$XR_REDIRECT" ] || NIC="$NIC,guestfwd=tcp:10.0.2.2:${XR_REDIRECT%%:*}-tcp:127.0.0.1:${XR_REDIRECT#*:}"
+# The firmware's external-radio address for a redirect: an address of the guest network that is NOT the host alias
+# 10.0.2.2 (QEMU's per-connection `cmd:` forward is refused there), built in with XR_HOST=10.0.2.100. Each connection the
+# firmware opens gets its own socat, which dials the bridge then: a `tcp:` forward instead connects ONCE when QEMU
+# starts, before the firmware dials, and that link never came up (measured on QEMU 9.2.2). `-t 30`: after one side's
+# EOF the other direction still has 30 s (a reply after a half-close arrives); `keepalive`: a dead bridge is detected.
+# No idle timeout: an idle XR link is normal. `,,` is a literal comma inside the -nic option.
+XR_ADDR="10.0.2.100"
+[ -z "$XR_REDIRECT" ] || NIC="$NIC,guestfwd=tcp:$XR_ADDR:${XR_REDIRECT%%:*}-cmd:socat -t 30 - TCP:127.0.0.1:${XR_REDIRECT#*:},,keepalive"
 FLASH="$SRC/.pio/build/$ENV_NAME/flash.bin"
 NODE_EFUSE="$NODE_IMAGE.efuse"
 

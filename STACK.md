@@ -26,7 +26,7 @@ the other repos; it builds the firmware in a disposable `.work/` tree.
 
 ## Prerequisites
 
-- **Always:** PlatformIO Core (`pio`), the Espressif `qemu-system-xtensa`, `libslirp0`, `python3`.
+- **Always:** PlatformIO Core (`pio`), the Espressif `qemu-system-xtensa`, `libslirp0`, `python3`; `socat` for `run.sh --xr-redirect`.
 - **For real RF only:** the LoRaHAM Pi-HAT (433 MHz), the built bridge (`meshcom-loraham-bridge/build/`), and the built daemon (`loraham_daemon`).
 - **For real GPS only:** a u-blox on `/dev/ttyACM0` owned by host gpsd — see [docs/gpsd-host-setup.md](docs/gpsd-host-setup.md). Synthetic fixtures need none of this.
 

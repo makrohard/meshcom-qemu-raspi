@@ -3,7 +3,7 @@
 # test-run-instance.sh — a second guest on one host (the test lab's two-node MeshCom row): run.sh's
 # --instance <n> moves the two host ports, the run directory and the persisted-state check to that
 # instance; n = 0 (the default) is exactly the single-guest QEMU argv (the whole vector is pinned);
-# --xr-redirect adds the guestfwd that sends the firmware's compiled-in bridge address to the
+# --xr-redirect adds the per-connection guestfwd (socat per connection) that sends the firmware's external-radio address to the
 # instance's own bridge; --ports gives the two host ports explicitly (instance 12 here: 0-99). A stub stands in for qemu-system-xtensa: it provisions, then serves a console
 # and a web page on the ports run.sh gave it.
 # No QEMU, no network. Needs ports 12323/18083, 12333/18093 and 12456/18216 free: never run it in parallel with
@@ -68,7 +68,7 @@ while True: time.sleep(1)
 EOF
 chmod +x "$T/qemu-stub"
 export STUB_ARGS="$T/args" STUB_STATE="$T/state"
-NIC1="user,id=net0,model=open_eth,hostfwd=tcp:127.0.0.1:18093-:80,hostfwd=tcp:127.0.0.1:12333-:2323,guestfwd=tcp:10.0.2.2:7000-tcp:127.0.0.1:7001"
+NIC1="user,id=net0,model=open_eth,hostfwd=tcp:127.0.0.1:18093-:80,hostfwd=tcp:127.0.0.1:12333-:2323,guestfwd=tcp:10.0.2.100:7000-cmd:socat -t 30 - TCP:127.0.0.1:7001,,keepalive"
 
 echo "== a second instance, provisioned and verified on its own ports"
 "$R/scripts/run.sh" --qemu "$T/qemu-stub" --node-image "$T/b/node.bin" --instance 1 \
@@ -145,7 +145,7 @@ check "plain stop.sh leaves instance 1's runner and guest running" \
 
 echo "== explicit ports (one guest per radio: the caller's port plan) on a two-digit instance"
 rm -f "$STUB_STATE"; : > "$STUB_ARGS"
-NIC12="user,id=net0,model=open_eth,hostfwd=tcp:127.0.0.1:18216-:80,hostfwd=tcp:127.0.0.1:12456-:2323,guestfwd=tcp:10.0.2.2:7000-tcp:127.0.0.1:7133"
+NIC12="user,id=net0,model=open_eth,hostfwd=tcp:127.0.0.1:18216-:80,hostfwd=tcp:127.0.0.1:12456-:2323,guestfwd=tcp:10.0.2.100:7000-cmd:socat -t 30 - TCP:127.0.0.1:7133,,keepalive"
 "$R/scripts/run.sh" --qemu "$T/qemu-stub" --node-image "$T/c/node.bin" --instance 12 --ports 18216:12456 \
 	--xr-redirect 7000:7133 > "$T/run12.out" 2>&1 &
 RUNNER=$!
@@ -154,6 +154,25 @@ check "the runner reports its provisioning verified (not a timeout, not a failur
 check "the wait leaves no tail behind" '! pgrep -a tail | grep -qF -- "$T/run12.out"'
 check "--ports: every launch uses exactly the given ports and the redirect" \
 	'grep -qx "$NIC12" "$STUB_ARGS" && ! grep -q "18203\|12443" "$STUB_ARGS"'
+# The forward's own command, as QEMU gets it (`,,` is a comma in the -nic option), against a stand-in bridge: the
+# firmware sends and half-closes, the bridge answers 2 s later, and the answer still arrives (socat -t 30).
+XRCMD="$(sed -n 's/.*,guestfwd=tcp:[^,]*-cmd://p' "$STUB_ARGS" | head -1)"; XRCMD="${XRCMD//,,/,}"
+half="$(timeout 30 python3 - "$XRCMD" <<'EOF'
+import shlex, socket, subprocess, sys, threading, time
+srv = socket.socket(); srv.bind(("127.0.0.1", 0)); srv.listen(1)
+cmd = shlex.split(sys.argv[1].replace("7133", str(srv.getsockname()[1])))
+def bridge():
+    c, _ = srv.accept(); got = b""
+    while (d := c.recv(64)):
+        got += d
+    time.sleep(2); c.sendall(b"reply:" + got); c.close()
+threading.Thread(target=bridge, daemon=True).start()
+p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+p.stdin.write(b"XR-hello"); p.stdin.close()
+print("halfclose", p.stdout.read() == b"reply:XR-hello" and p.wait() == 0)
+EOF
+)"
+check "the forward relays a reply that comes 2 s after the firmware's half-close" '[ "$half" = "halfclose True" ]'
 check "--ports: the persisted-state check reads the given console port (marker written)" '[ -f "$T/c/node.bin.provisioned" ]'
 check "--instance 12: its pid files are in .run/12/" '[ -f "$R/.run/12/run.pid" ] && [ -f "$R/.run/12/qemu.pid" ]'
 check "--ports: it announces the given web port" 'grep -q "127.0.0.1:18216/" "$T/run12.out"'
@@ -187,6 +206,12 @@ check "a redirect without a host port is refused" '[ "$rc" = 2 ] && grep -q "xr-
 check "a redirect with trailing text is refused (nothing reaches -nic)" '[ "$rc" = 2 ] && grep -q "xr-redirect must be" "$T/bad3.out"'
 "$R/scripts/stop.sh" --instance x > "$T/bad4.out" 2>&1; rc=$?
 check "stop.sh refuses an invalid --instance with 2" '[ "$rc" = 2 ]'
+# --xr-redirect runs socat per connection: without it on PATH the runner stops by name, before its run directory.
+mkdir -p "$T/nosocat"; ln -s "$(command -v dirname)" "$T/nosocat/dirname"; TO="$(command -v timeout)"
+PATH="$T/nosocat" "$TO" 20 "$BASH" "$R/scripts/run.sh" --qemu "$T/qemu-stub" --instance 7 --xr-redirect 7000:7001 \
+	> "$T/nosocat.out" 2>&1; rc=$?
+check "--xr-redirect without socat is refused with 1, by name, before .run/7" \
+	'[ "$rc" = 1 ] && grep -q "needs socat" "$T/nosocat.out" && [ ! -e "$R/.run/7" ]'
 
 if [ "$FAILS" -eq 0 ]; then echo "ALL PASS"; exit 0; fi
 echo "FAILURES: $FAILS"; exit 1
