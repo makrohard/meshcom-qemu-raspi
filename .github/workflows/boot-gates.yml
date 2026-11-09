@@ -33,7 +33,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q git curl build-essential cmake ninja-build pkg-config libglib2.0-dev \
-            libpixman-1-dev libslirp-dev libslirp0 zlib1g-dev libgcrypt20-dev libssl-dev shellcheck python3-pip
+            libpixman-1-dev libslirp-dev libslirp0 zlib1g-dev libgcrypt20-dev libssl-dev shellcheck python3-pip socat
           # QEMU 9.2 needs meson >= 1.5 (scripts/build-qemu.sh checks it); the distribution's is older.
           pip install --user --break-system-packages 'meson>=1.5' platformio==6.1.19
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
