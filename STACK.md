@@ -132,7 +132,7 @@ host-forwarded console and use `--` commands:
 nc 127.0.0.1 12323          # or: socat - TCP:127.0.0.1:12323
 --help                      # list all commands
 --setcall OE1XYZ-7          # callsign (format-checked)
---txpower 14                # TX power in dBm (the daemon accepts 2..17 on SX127x)
+--txpower 14                # TX power in dBm, 0..20 (the daemon: 2..17 on SX127x, 20 with its high-power grant)
 --pos                       # show position; --info shows the current config
 ```
 
@@ -155,12 +155,11 @@ different partition table starts from defaults, and says so. The node's MAC, and
   `/tmp/loraconf433.sock`.)
 - **Start the GPS relay before the node** — the firmware's GPS init is one-shot, so NMEA
   must be flowing when it runs (the relay waits for the UART socket, so launch it first).
-- **TX power is 17 dBm** (`overlay/variants/qemu-headless/configuration.h`): since daemon
-  1.0.0 the accepted range on SX127x boards is **2..17 dBm** (17 is the PA_BOOST maximum;
-  below 2 the chip drives RFO, not the antenna pin), and a CONFIGURE outside it is rejected
-  outright — a firmware built at the old 20 cannot configure the radio at all. The node's
-  stored TX power is sent at XR connect and re-synced after a runtime `--txpower` change.
-  SX1262 boards (Waveshare) still accept 0..20.
+- **TX power starts at 14 dBm** (`overlay/variants/qemu-headless/configuration.h`); `--txpower` takes 0..20, the
+  chip union. The node's stored TX power is sent at XR connect and re-synced after a runtime `--txpower` change, and
+  the daemon refuses a CONFIGURE outside its radio's range: SX127x 2..17 (17 is the PA_BOOST maximum; below 2 the chip
+  drives RFO, not the antenna pin), 20 only with the daemon's high-power grant; SX1262 0..20. A node set outside its
+  radio's range has no radio until a valid power is set.
 - **gpsd stays loopback-only**; the relay only reads `127.0.0.1:2947` or a fixture and
   never touches `/dev/ttyACM0`. Fixtures are synthetic; never commit real coordinates.
 - **Spectrum scan is not available under QEMU** — it sweeps RSSI off a local SX126x chip

@@ -46,4 +46,12 @@ bash "$d/scripts/apply-overlay.sh" >"$work/out4" 2>&1; rc=$?
 [ "$rc" = 1 ] && grep -q 'overlay/src/qemu is missing' "$work/out4" && [ ! -e "$fw/variants" ] \
 	&& pass "(d) a missing overlay directory fails with rc 1 and copies nothing" || bad "(d) missing overlay: rc $rc"
 
+# (e) the shipped variant: a fresh node transmits at 14 dBm, and --txpower takes the chip union 0..20 (the daemon
+# checks each radio's own range). Read from the real overlay, whose values the build copies unchanged.
+cfg="$HERE/../overlay/variants/qemu-headless/configuration.h"
+want=$'#define TX_POWER_MAX 20\n#define TX_POWER_MIN 0\n#define TX_OUTPUT_POWER 14'
+got="$(grep -E '^#define (TX_POWER_MAX|TX_POWER_MIN|TX_OUTPUT_POWER)[[:space:]]' "$cfg")"
+[ "$got" = "$want" ] && pass "(e) the variant builds at 14 dBm with --txpower 0..20" \
+	|| { bad "(e) power defines:"; printf '%s\n' "$got" | sed 's/^/    /' >&2; }
+
 exit $fail

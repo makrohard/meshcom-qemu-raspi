@@ -42,16 +42,17 @@
 #define LORA_CR 6
 #define LORA_BANDWIDTH 250
 #define LORA_SF 11
-// 17 dBm: the external-radio path reports this power to the LoRaHAM daemon, which
-// accepts 2..17 dBm on SX127x boards and rejects a CONFIGURE outside it — 17 is the
-// PA_BOOST maximum, and below 2 the chip drives RFO instead, which is not the pin the
-// antenna is on. (Until daemon 1.0.0 the range was 0..20 and this was 20; a firmware
-// built at 20 cannot configure an SX127x daemon at all.) The node's power (--txpower,
-// stored in NVS; this value by default) goes to the bridge at every XR connect and on a
-// change. Without the external radio no chip answers, so the value is unused.
-#define TX_POWER_MAX 17
-#define TX_POWER_MIN 2
-#define TX_OUTPUT_POWER 17
+// TX power. The external-radio path reports the node's power (--txpower, stored in NVS; TX_OUTPUT_POWER until one
+// is set) to the bridge at every XR connect and on a change, and the LoRaHAM daemon applies it to its radio.
+// 14 dBm: a fresh node starts at a level every supported radio takes (the USB radios' safe default; SX127x 2..17,
+// SX1262 0..20). The range is the chip union 0..20: LoRaHAM Pi Control sets the radio's configured POWER with
+// --txpower after the callsign and checks it per chip (SX127x 2..17, 20 only with the daemon's high-power grant),
+// and the daemon checks it again. A value set on the node itself outside its radio's range (0, 1, 18, 19 or an
+// ungranted 20 on an SX127x) makes the daemon refuse the next CONFIGURE until a valid one is set.
+// Without the external radio no chip answers, so the value is unused.
+#define TX_POWER_MAX 20
+#define TX_POWER_MIN 0
+#define TX_OUTPUT_POWER 14
 #define CURRENT_LIMIT 140
 #define WAIT_TX 5
 
